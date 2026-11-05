@@ -309,9 +309,11 @@ def _report(message: str) -> None:
 #
 # `ui.icons.KINDS` has no play, no frame-step, no volume and nothing for the arrange
 # menu. `ui/icons.py` belongs to the finished recorder and is not this feature's to edit,
-# and an unknown name makes `icons.draw` stroke a placeholder, so the player's seven
+# and an unknown name makes `icons.draw` stroke a placeholder, so the player's own
 # glyphs are drawn here on the same 24x24 grid, with the same round caps and joins, so
-# they sit beside the recorder's icons without looking borrowed.
+# they sit beside the recorder's icons without looking borrowed. `PLAYER_GLYPHS` is the
+# list; a count in this sentence would be a number to keep right, and the tuple below
+# is already the answer.
 
 _GRID = 24.0
 
@@ -324,6 +326,8 @@ PLAYER_GLYPHS: tuple[str, ...] = (
     "volume_off",
     "arrange",
     "sync",
+    "fullscreen",
+    "fullscreen_exit",
 )
 
 
@@ -355,6 +359,29 @@ def draw_glyph(
         pen = QtGui.QPen(ink, weight)
         pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
         pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+
+        if kind in ("fullscreen", "fullscreen_exit"):
+            # Four brackets: pointing out of the corners to go in, and into them to
+            # come back. Drawn here rather than in `stage.py`, which had its own copy
+            # of this whole function for these two shapes alone.
+            painter.setPen(pen)
+            painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            corners = (
+                (((4.0, 9.0), (4.0, 4.0), (9.0, 4.0)),
+                 ((15.0, 4.0), (20.0, 4.0), (20.0, 9.0)),
+                 ((20.0, 15.0), (20.0, 20.0), (15.0, 20.0)),
+                 ((9.0, 20.0), (4.0, 20.0), (4.0, 15.0)))
+                if kind == "fullscreen" else
+                (((9.0, 4.0), (9.0, 9.0), (4.0, 9.0)),
+                 ((15.0, 4.0), (15.0, 9.0), (20.0, 9.0)),
+                 ((20.0, 15.0), (15.0, 15.0), (15.0, 20.0)),
+                 ((4.0, 15.0), (9.0, 15.0), (9.0, 20.0)))
+            )
+            for bracket in corners:
+                painter.drawPolyline(
+                    QtGui.QPolygonF([QtCore.QPointF(x, y) for x, y in bracket])
+                )
+            return True
 
         if kind == "play":
             painter.setPen(QtCore.Qt.PenStyle.NoPen)
@@ -922,6 +949,8 @@ class ScreenView(QtWidgets.QWidget):
 
     #: A click that was a click and not a drag.
     clicked = QtCore.Signal()
+    #: True when this window has just filled its monitor, False when it came back.
+    full_screen_changed = QtCore.Signal(bool)
     #: §1: files dropped on this view. A list, because two at once are a pair. The
     #: view opens nothing itself - what a drop means is `PlayerWindows`' policy, the
     #: way closing a window is - so this carries the gesture and no "and therefore".
@@ -930,6 +959,12 @@ class ScreenView(QtWidgets.QWidget):
     #: down. Added to the brief's signature because something has to carry "close the
     #: rest", and an event filter on a window the caller does not own is worse.
     closed = QtCore.Signal()
+    #: The picture was double clicked. Carried, not acted on: which window fills a
+    #: monitor is `PlayerWindows`' to decide, the way a dropped file is.
+    double_clicked = QtCore.Signal()
+    #: The pointer came over this window. `PlayerWindows` keeps the last one, because
+    #: by the time the transport's own button is pressed the pointer is on the bar.
+    pointed = QtCore.Signal()
 
     def __init__(
         self,
@@ -1014,6 +1049,21 @@ class ScreenView(QtWidgets.QWidget):
         self._press_global: QtCore.QPoint | None = None
         self._travelled = False
         self._resize_edges: QtCore.Qt.Edge | None = None
+        #: Where this window was before it filled the monitor. `showNormal`
+        #: restores a size but not reliably a place for a frameless window.
+        self._before_full: QtCore.QRect | None = None
+        #: What the rest of the player has last been told. `changeEvent` compares
+        #: against it so that a state Qt reports twice is announced once.
+        self._announced_full = False
+        #: Set while `set_full_screen` is working, so that `changeEvent` does not
+        #: announce a change this object is in the middle of making.
+        self._own_state_change = False
+        #: Whether the last release actually emitted `clicked`. A release that ended a
+        #: drag or a resize does not, and `mouseDoubleClickEvent` must not undo a
+        #: play/pause that never happened.
+        self._release_clicked = False
+        #: Set by `mouseDoubleClickEvent` for the release that follows it.
+        self._swallow_release = False
         self._resize_geometry: QtCore.QRect | None = None
 
         self._connect_sink(sink)
@@ -1324,6 +1374,119 @@ class ScreenView(QtWidgets.QWidget):
             return QtCore.Qt.CursorShape.SizeVerCursor
         return QtCore.Qt.CursorShape.ArrowCursor
 
+    def mouseDoubleClickEvent(self, event: QtGui.QMouseEvent) -> None:
+        """Ask for full screen, and leave the playback exactly as it was.
+
+        **Qt's double click is four events, not three**: press, release, *double
+        click*, release. Measured on 2026-11-05 through `QTest.mouseDClick`, after a
+        first version of this method assumed three and a test of mine sent only three
+        and so agreed with it. `clicked` is emitted from the *release*, so the pair
+        reaches `_engine.toggle` three times unless both extra ones are dealt with:
+        the first release is undone here, and the trailing release is swallowed. Three
+        is an odd number, so the bug this caused was precisely the one the undo exists
+        to prevent - a picture that stops when you go full screen to watch it.
+
+        The undo is conditional, because the first release does not always toggle: a
+        release that ended a drag or a resize emits nothing, and undoing an emission
+        that never happened would flip the playback the other way. `_release_clicked`
+        records what actually came out.
+
+        Which window fills is not decided here. `PlayerWindows` decides, for the same
+        reason the transport's button does not decide either: leaving a full screen
+        wins over entering one, and only the set knows whether anything is filled.
+        """
+        if event.button() != QtCore.Qt.MouseButton.LeftButton:
+            event.ignore()
+            return
+        if self._release_clicked:
+            self.clicked.emit()          # undo the first release's play/pause
+        self._swallow_release = True     # and ignore the one still to come
+        self.double_clicked.emit()
+        event.accept()
+
+    @property
+    def full_screen(self) -> bool:
+        return bool(self.isFullScreen())
+
+    def set_full_screen(self, wanted: bool) -> None:
+        """Fill this window's own monitor, or go back to where it was.
+
+        **What the remembered rectangle is and is not.** An earlier version of this
+        docstring said Qt restores "only the geometry" and that a window moved while
+        full screen comes back somewhere else. Measured on 2026-11-05, on this desktop
+        and under the offscreen plugin alike: `showNormal` after `showFullScreen`
+        gives back the original rectangle exactly, and a window cannot be moved while
+        full screen at all - the move itself ends the full screen (`isFullScreen()`
+        goes False on the `move`) and leaves the window where the move put it. So
+        `_before_full` is a second statement of the answer Qt already gives, not a
+        repair of a wrong one, and it is kept for being this code's own answer rather
+        than a dependency on Qt's bookkeeping. `changeEvent` drops it whenever the way
+        out was somebody else's: they chose where the window goes, and that is then
+        where it belongs.
+
+        The announcement comes last, after the geometry is back, because what hears it
+        re-places the transport bar against these windows and would otherwise measure
+        them half way through. `changeEvent` is told to stay quiet for the duration -
+        it is there for the changes this method did *not* make.
+        """
+        if bool(wanted) == self.isFullScreen():
+            return
+        self._own_state_change = True
+        try:
+            if wanted:
+                self._before_full = QtCore.QRect(self.geometry())
+                self.showFullScreen()
+            else:
+                self.showNormal()
+                if self._before_full is not None:
+                    self.setGeometry(self._before_full)
+                    self._before_full = None
+        finally:
+            self._own_state_change = False
+        self._announced_full = bool(self.isFullScreen())
+        self.full_screen_changed.emit(self._announced_full)
+
+    def _check_full_screen(self) -> None:
+        """Report a full screen begun or ended by somebody who is not this method's
+        owner, whenever Qt gives any sign that the window has changed.
+
+        **Why this is not `changeEvent` alone.** It was, and that was wrong. Measured
+        on 2026-11-05, on this desktop and under the offscreen plugin alike: `move`,
+        `resize` and `setGeometry` on a full-screen window all end the full screen -
+        `isFullScreen()` goes False - and **none of them delivers a
+        `WindowStateChange`**. So the one route that matters most here, an arrangement
+        or a drag moving a filled window, is exactly the route `changeEvent` cannot
+        see. Hence the same check from the move and resize events as well; between the
+        three of them there is no way for the window to change size, place or state
+        without this running.
+
+        The routes it covers: the viewer's own window manager, a drag of the window by
+        its picture, `rescue_windows`, and any arrangement that was not told to come
+        out of full screen first.
+
+        The remembered rectangle is dropped when the way out was not ours. Whoever
+        moved the window has chosen where it goes; putting it back afterwards would
+        undo the arrangement, or the drag, that had just been asked for.
+        """
+        if self._own_state_change:
+            return
+        now = bool(self.isFullScreen())
+        if now == self._announced_full:
+            return
+        self._announced_full = now
+        if not now:
+            self._before_full = None
+        self.full_screen_changed.emit(now)
+
+    def changeEvent(self, event: QtCore.QEvent) -> None:
+        super().changeEvent(event)
+        if event.type() == QtCore.QEvent.Type.WindowStateChange:
+            self._check_full_screen()
+
+    def moveEvent(self, event: QtGui.QMoveEvent) -> None:
+        super().moveEvent(event)
+        self._check_full_screen()
+
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
         if event.button() != QtCore.Qt.MouseButton.LeftButton:
             event.ignore()
@@ -1395,12 +1558,19 @@ class ScreenView(QtWidgets.QWidget):
         self._drag_offset = None
         self._press_global = None
         self._travelled = False
-        if not was_resize and not travelled:
+        if self._swallow_release:
+            # The second release of a double click. `mouseDoubleClickEvent` says why.
+            self._swallow_release = False
+            event.accept()
+            return
+        self._release_clicked = not was_resize and not travelled
+        if self._release_clicked:
             self.clicked.emit()
         event.accept()
 
     def enterEvent(self, event: QtCore.QEnterEvent) -> None:
         self.wake_label()
+        self.pointed.emit()
         super().enterEvent(event)
 
     def leaveEvent(self, event: QtCore.QEvent) -> None:
@@ -1409,6 +1579,7 @@ class ScreenView(QtWidgets.QWidget):
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
+        self._check_full_screen()
         self._place_overlays()
 
     def showEvent(self, event: QtGui.QShowEvent) -> None:
@@ -2058,6 +2229,10 @@ class TransportBar(surfaces.FloatingSurface):
     audio_source_requested = QtCore.Signal(int)
     #: §2.2: stream index, and the offset in milliseconds it should have.
     offset_requested = QtCore.Signal(int, int)
+    #: Fill a monitor with the picture, or come back out. The bar does not know
+    #: which window: it carries the control and `PlayerWindows` carries the decision,
+    #: the same division as the arrange and open menus above.
+    full_screen_requested = QtCore.Signal()
     close_requested = QtCore.Signal()
     #: The bar itself was closed - by Alt+F4, by the taskbar, or by the set shutting
     #: down. It carries a close button, so it is the obvious thing to close the player
@@ -2216,6 +2391,12 @@ class TransportBar(surfaces.FloatingSurface):
         self.arrange_button.hide()
         row.addWidget(self.arrange_button)
 
+        #: Which way the button points. See `set_full_screen`.
+        self._filling = False
+        self.full_button = PlayerButton("fullscreen", _("Full screen (F11)"))
+        self.full_button.clicked.connect(self.full_screen_requested.emit)
+        row.addWidget(self.full_button)
+
         self.close_button = surfaces.IconButton("close", _("Close the player (Esc)"))
         self.close_button.clicked.connect(self.close_requested.emit)
         row.addWidget(self.close_button)
@@ -2261,6 +2442,7 @@ class TransportBar(surfaces.FloatingSurface):
             pick("windows.open.button", "Open a recording (Ctrl+O)")
         )
         self.close_button.setToolTip(_("Close the player (Esc)"))
+        self.full_button.setToolTip(self._full_tooltip())
         self.play_button.setToolTip(self._play_tooltip())
         self._write_volume_tooltip()
         self._write_audio_chip()
@@ -2550,6 +2732,33 @@ class TransportBar(surfaces.FloatingSurface):
         self._playing = bool(playing)
         self.play_button.set_kind("pause" if self._playing else "play")
         self.play_button.setToolTip(self._play_tooltip())
+
+    def set_full_screen(self, filling: bool) -> None:
+        """Say which way the button now goes: brackets out to fill, in to come back.
+
+        The glyph is swapped rather than the button being toggled "on", because this is
+        not a mode the way mute is - it is a direction. A viewer looking at a filled
+        monitor wants to be told how to get out, not that they are in.
+
+        The state is kept rather than only painted, because `retranslate` has to be
+        able to say the right one of the two sentences again when the language changes.
+        """
+        self._filling = bool(filling)
+        self.full_button.set_kind("fullscreen_exit" if self._filling else "fullscreen")
+        self.full_button.setToolTip(self._full_tooltip())
+
+    def _full_tooltip(self) -> str:
+        return _("Leave full screen (F11)") if self._filling else _("Full screen (F11)")
+
+    def set_full_screen_available(self, available: bool) -> None:
+        """Hide the button when there is nothing to fill a monitor with.
+
+        The same rule as `set_arrange_available` and for the same reason: the player
+        stands open with no recording loaded - `open.empty_player`, which is what an
+        empty output folder gives - and a button that does nothing is worse than no
+        button.
+        """
+        self.full_button.setVisible(bool(available))
 
     def set_arrange_available(self, available: bool) -> None:
         """Show or hide the arrange button.
@@ -3507,6 +3716,8 @@ class PlayerWindows(QtCore.QObject):
         #: every view back to "Screen 2".
         self._given_titles: list[str] = list(titles)
 
+        #: The last view the pointer was over. `_view_in_hand` says why it is kept.
+        self._last_pointed: int | None = None
         self.views: list[ScreenView] = []
         for index in range(count):
             sink = sinks[index] if index < len(sinks) else None
@@ -3518,6 +3729,11 @@ class PlayerWindows(QtCore.QObject):
             # behaviour §5 is changing.
             view.closed.connect(lambda which=index: self._view_closed(which))
             view.files_dropped.connect(self.open_paths)
+            # A double click on the picture goes full screen without the bar being
+            # touched, so the bar has to hear about it to show the right glyph.
+            view.full_screen_changed.connect(lambda _filling: self._settle_full_screen())
+            view.double_clicked.connect(self.toggle_full_screen)
+            view.pointed.connect(lambda which=index: self._point_at(which))
             view.installEventFilter(self)
             self.views.append(view)
         if not self.views and getattr(self._engine.recording, "screens", None):
@@ -3540,8 +3756,10 @@ class PlayerWindows(QtCore.QObject):
         self.transport.volume_requested.connect(self._engine.set_volume)
         self.transport.mute_requested.connect(self._toggle_mute)
         self.transport.arrange_requested.connect(self._open_arrange_menu)
+        self.transport.full_screen_requested.connect(self.toggle_full_screen)
         self.transport.close_requested.connect(self.close_all)
         self.transport.set_arrange_available(len(self.views) > 1)
+        self.transport.set_full_screen_available(bool(self.views))
         # `docs/PLAYER_SOURCES.md`'s four controls. The bar carries them; every
         # decision about what they do is here, the way the arrange menu already works.
         self.transport.open_requested.connect(self._open_open_menu)
@@ -3806,6 +4024,13 @@ class PlayerWindows(QtCore.QObject):
         """
         if self.has_closed() or not self.views:
             return
+        # An arrangement is a statement about where the windows go, so a window
+        # filling a monitor comes out first and is laid out like the rest. Without
+        # this the arrangement still happens - Qt drops the full screen the moment
+        # `setGeometry` reaches the window - but the rectangle it would return to is
+        # left pointing at where it was before it filled anything, and the next way
+        # out of a full screen would drag it back there.
+        self._leave_full_screen()
         area = self.tiling_area()
         if area.isEmpty():
             # No screen at all - a state Qt reports during a display change. There is
@@ -4033,6 +4258,9 @@ class PlayerWindows(QtCore.QObject):
             boxes = [QtCore.QRect(area)]
         else:
             boxes = layouts.tile_rects(area, tiling)
+        # After the refusals above, not before them: a call that moves nothing must
+        # not have changed anything either. `arrange` says why this is here at all.
+        self._leave_full_screen()
         # `_in_placement_order`, for `arrange`'s reason: §7's `S` swaps which window
         # gets which box, and re-applying a scheme must keep that.
         for view, box in zip(self._in_placement_order(open_views), boxes):
@@ -4084,6 +4312,8 @@ class PlayerWindows(QtCore.QObject):
                 )
             order = layouts.best_pairing(areas, streams)
         self._pairing = tuple(order)
+        # After the refusals above, not before them. `apply_tiling` says why.
+        self._leave_full_screen()
         for index, where in enumerate(order):
             # Only a view the *viewer* put away is brought back. Calling `_unhide`
             # unconditionally would put the whole set on screen the moment a host
@@ -4286,6 +4516,10 @@ class PlayerWindows(QtCore.QObject):
             return
         self._hidden.add(index)
         view = self.views[index]
+        # Out of the full screen before it goes away. `QWidget.hide()` leaves Qt's
+        # full-screen bit set, and a hidden window that still counts as filling a
+        # monitor is one the "leave full screen" control brings back on screen.
+        view.set_full_screen(False)
         if view.isVisible():
             view.hide()
 
@@ -4350,7 +4584,30 @@ class PlayerWindows(QtCore.QObject):
         """Qt says a monitor has gone. Make sure no window went with it."""
         name = getattr(screen, "name", None)
         _report(f"a screen was removed ({name() if callable(name) else name!r}).")
+        self._leave_full_screen_if_stranded()
         self.rescue_windows()
+
+    def _leave_full_screen_if_stranded(self) -> None:
+        """Bring a filled window out only when its monitor is the one that has gone.
+
+        A full-screen window is exactly the size of the monitor it is on, so when that
+        monitor goes it is stranded whole - and it is the one shape `rescue_windows`
+        cannot help, because moving a window is what ends its full screen, and it
+        would end it without telling anyone where the window had been.
+
+        Only the stranded one. An earlier version of this came out of every full
+        screen on any `screenRemoved`, which `rescue_windows` itself says is usually
+        nothing: "a desk with two monitors where the *other* one was unplugged strands
+        nothing". Unplugging a monitor you were not watching should not take the
+        picture you were watching out of full screen.
+        """
+        areas = screen_areas()
+        if not areas:
+            return  # no screen at all; there is nowhere to come out to
+        for view in self.full_screen_views():
+            box = view.geometry()
+            if rescue_into(box, areas) != box:
+                view.set_full_screen(False)
 
     def rescue_windows(self) -> list[str]:
         """Move every window that cannot be reached onto one that can, and say which.
@@ -5135,6 +5392,111 @@ class PlayerWindows(QtCore.QObject):
             )
         )
 
+    # -- full screen -------------------------------------------------------
+
+    def _point_at(self, index: int) -> None:
+        """Remember which window the pointer went over. `_view_in_hand` says why."""
+        if 0 <= index < len(self.views):
+            self._last_pointed = index
+
+    def _view_in_hand(self) -> "ScreenView | None":
+        """The view the viewer means by "this one".
+
+        Under the pointer first, because that is where their attention is. **But the
+        pointer is not always over a picture**: the transport is a separate
+        always-on-top window, so at the moment its own button is pressed the pointer is
+        on the bar - and the bar sits over whichever view it happens to overlap, which
+        is not the one being watched. That was the first version of this method and it
+        filled the wrong window. So the last view the pointer was actually *in* is kept
+        as well, and used when the pointer is not in one now.
+
+        Then the window with focus, for `F11` typed with the pointer off the set
+        entirely. Then the first open view, so the control always does something.
+        """
+        where = QtGui.QCursor.pos()
+        open_views = [view for view in self.views if view.isVisible()]
+        for view in open_views:
+            if view.geometry().contains(where):
+                return view
+        if self._last_pointed is not None and 0 <= self._last_pointed < len(self.views):
+            remembered = self.views[self._last_pointed]
+            if remembered in open_views:
+                return remembered
+        for view in open_views:
+            if view.isActiveWindow():
+                return view
+        return open_views[0] if open_views else None
+
+    def full_screen_views(self) -> "list[ScreenView]":
+        """Every view actually filling a monitor.
+
+        `isVisible` is part of the question, not a tidy-up. `QWidget.hide()` does not
+        clear Qt's full-screen bit, so a window the viewer closed - §5 hides the second
+        one rather than stopping its stream - went on answering yes. The bar then
+        offered the way out of a full screen that was not on any monitor, and taking
+        that offer called `showNormal` on the hidden window, which *showed* it: the
+        window came back from the dead and `Escape` did not close the player.
+        `hide_view` now leaves the full screen on the way out, and this is the second
+        lock on the same door.
+        """
+        return [view for view in self.views if view.isVisible() and view.full_screen]
+
+    def toggle_full_screen(self) -> None:
+        """Fill a monitor with one view, or - if one already is - come back out.
+
+        Leaving wins over entering when anything is already full screen, including
+        when the pointer is over a *different* window: the control is one button and
+        one key, and the state it is reporting is "something is filling a monitor".
+        """
+        if self.has_closed():
+            return
+        if self._leave_full_screen():
+            return
+        view = self._view_in_hand()
+        if view is None:
+            return
+        view.set_full_screen(True)
+
+    def _leave_full_screen(self) -> bool:
+        """Bring every filled view back. True if there was one, which is what Escape
+        reads to decide whether it has already done its job."""
+        if self.has_closed():
+            return False
+        filled = self.full_screen_views()
+        for view in filled:
+            view.set_full_screen(False)
+        return bool(filled)
+
+    def _settle_full_screen(self) -> None:
+        """Put the bar where the new geometry says it goes, and on top of it.
+
+        Called from every view's `full_screen_changed`, which is the one place that
+        hears about a change whoever made it - this object, the window manager, or an
+        arrangement moving the window.
+
+        **The filled view is put first on purpose.** `_place_transport` hands the
+        rectangles to `transport_spot`, which places the bar on the screen hosting
+        `boxes[0]` alone. Passing the views in their own order therefore followed
+        `views[0]` whatever had been filled, and on a two-monitor desk that left the
+        only "leave full screen" button on the other screen from the picture. The one
+        monitor this was first measured on could not show it, because there `views[0]`
+        was the filled view.
+
+        A full-screen window is still an ordinary window as far as stacking goes - the
+        bar carries `WindowStaysOnTopHint` and the views do not - but it has just been
+        shown, so it is above everything that was not raised after it. Hence `raise_`.
+        """
+        if self.has_closed():
+            return
+        filled = self.full_screen_views()
+        self.transport.set_full_screen(bool(filled))
+        order = list(self.views)
+        if filled:
+            order = [filled[0]] + [view for view in order if view is not filled[0]]
+        if order:
+            self._place_transport([view.geometry() for view in order])
+        self.transport.raise_()
+
     def _transport_closed(self) -> None:
         # And closing the bar closes the set, for the same reason and more so: the bar
         # is the only window with a close button, so Alt+F4 on it is what a viewer
@@ -5200,7 +5562,8 @@ class PlayerWindows(QtCore.QObject):
         return super().eventFilter(watched, event)
 
     def handle_key(self, event: QtGui.QKeyEvent) -> bool:
-        """§7's table: Space, the arrows, `,` and `.`, Home, End and Esc.
+        """§7's table: Space, the arrows, `,` and `.`, Home, End, S, L, F11 and Esc,
+        plus Ctrl+O.
 
         **The arrows skip and the commas step**, which is the other way round from
         what this window did until now. §7 has one table for the whole player and
@@ -5243,10 +5606,14 @@ class PlayerWindows(QtCore.QObject):
         **What this half deliberately does not answer**, so that the difference is
         written down rather than found: `1` and `2`, which §6 marks "stage layouts"
         and which choose the main stream of a stage that has no counterpart here -
-        every window of this half is already showing its own stream - and `F11`,
-        which is the stage window's own full screen and not in §6's table at all.
-        These windows are frameless and borderless; there is nothing for them to go
-        full screen *out of*.
+        every window of this half is already showing its own stream.
+
+        `F11` used to be on that list, on the grounds that these windows are frameless
+        and have nothing to go full screen *out of*. That was true about borders and
+        wrong about people: a frameless window filling half a monitor is not full
+        screen either, and the viewer who said so on 2026-11-05 - "не увидел у плеера
+        возможности развернуть видео на весь экран" - was looking at this half, which
+        is what a one-screen recording opens in and therefore what most people see.
         """
         key = event.key()
         letter = event.text().lower()
@@ -5275,8 +5642,14 @@ class PlayerWindows(QtCore.QObject):
             self.swap_windows()
         elif letter in ("l", "д"):
             self.cycle_arrangement()
+        elif key == QtCore.Qt.Key.Key_F11:
+            self.toggle_full_screen()
         elif key == QtCore.Qt.Key.Key_Escape:
-            self.close_all()
+            # Escape means "out of this", and while a window is filling a monitor the
+            # thing to come out of is the full screen, not the player. Press it again
+            # and it closes, which is what it has always done.
+            if not self._leave_full_screen():
+                self.close_all()
         else:
             return False
         event.accept()

@@ -116,6 +116,11 @@ RUSSIAN: dict[str, str] = {
     "Close the player (Esc)": "Закрыть плеер (Esc)",
     "Mute": "Выключить звук",
     "Full screen": "Во весь экран",
+    # The windows half names the key the way its neighbours do - «Пауза (пробел)»,
+    # «Закрыть плеер (Esc)» - while the stage's own button says the bare phrase. Two
+    # entries rather than one built from a tail: a tooltip is a whole sentence here.
+    "Full screen (F11)": "Во весь экран (F11)",
+    "Leave full screen (F11)": "Выйти из полноэкранного режима (F11)",
     "Scrub": "Перемотка",
     "Screen {number} - primary": "Экран {number} — основной",
     # The volume button says the whole sentence in one entry per state, not a verb

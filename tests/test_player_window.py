@@ -3997,5 +3997,431 @@ class SeparateWindowsKeyboardTests(SeparateWindowsTestCase):
         self.assertNotIn(i18n._("Swap the screens (S)"), menu_texts(menu))
 
 
+class FullScreenTests(SeparateWindowsTestCase):
+    """Reported on 2026-11-05: the windows half had no way to fill a monitor.
+
+    `stage.py` had one all along; this half, which is what a one-screen recording
+    opens in and therefore what most people see, did not, and its key handler said so
+    on purpose. These are the checks that it does now, and that leaving works by every
+    route a person would reach for.
+    """
+
+    def ready(self, engine: StubEngine | None = None) -> player_window.PlayerWindows:
+        windows = self.make(engine if engine is not None else StubEngine())
+        windows.show()
+        self.app.processEvents()
+        return windows
+
+    def test_the_bar_carries_a_full_screen_button(self) -> None:
+        """`isVisibleTo`, not `kind`: the report being answered was that the control
+        could not be *seen*, and `kind` is set in the constructor - it would still be
+        right if the button had never been added to the row, which is exactly the
+        mistake its neighbour `arrange_button` shows is easy to make (created, hidden,
+        and only then added)."""
+        windows = self.ready()
+        bar = windows.transport
+        self.assertIn("fullscreen", player_window.PLAYER_GLYPHS)
+        self.assertEqual(bar.full_button.kind, "fullscreen")
+        self.assertIsNotNone(bar.full_button.parent(), "the button is on no layout")
+        self.assertTrue(bar.full_button.isVisibleTo(bar), "the button is not on the bar")
+
+    def test_the_button_fills_a_window(self) -> None:
+        windows = self.ready()
+        windows.transport.full_button.click()
+        self.app.processEvents()
+        self.assertEqual(len(windows.full_screen_views()), 1)
+
+    def test_f11_fills_and_f11_comes_back(self) -> None:
+        windows = self.ready()
+        _key(windows, QtCore.Qt.Key.Key_F11)
+        self.app.processEvents()
+        self.assertTrue(windows.full_screen_views())
+        _key(windows, QtCore.Qt.Key.Key_F11)
+        self.app.processEvents()
+        self.assertFalse(windows.full_screen_views())
+
+    def test_the_glyph_turns_round_while_filled(self) -> None:
+        """The button says the way out, not the state it is in."""
+        windows = self.ready()
+        windows.toggle_full_screen()
+        self.app.processEvents()
+        self.assertEqual(windows.transport.full_button.kind, "fullscreen_exit")
+        windows.toggle_full_screen()
+        self.app.processEvents()
+        self.assertEqual(windows.transport.full_button.kind, "fullscreen")
+
+    def test_escape_leaves_full_screen_before_it_closes(self) -> None:
+        """The one rule that is not just a toggle: Escape means "out of this", and
+        while a monitor is filled the thing to come out of is the full screen."""
+        windows = self.ready()
+        shut: list[int] = []
+        windows.closed.connect(lambda: shut.append(1))
+        windows.toggle_full_screen()
+        self.app.processEvents()
+        _key(windows, QtCore.Qt.Key.Key_Escape)
+        self.app.processEvents()
+        self.assertFalse(windows.full_screen_views())
+        self.assertEqual(shut, [], "Escape closed the player on its way out")
+        _key(windows, QtCore.Qt.Key.Key_Escape)
+        self.app.processEvents()
+        self.assertEqual(shut, [1])
+
+    def mouse(self, view, *kinds, at=(60, 60)) -> None:
+        """Send a real mouse sequence to `view`, in Qt's own event types."""
+        for kind in kinds:
+            QtWidgets.QApplication.sendEvent(view, QtGui.QMouseEvent(
+                kind,
+                QtCore.QPointF(*at),
+                view.mapToGlobal(QtCore.QPointF(*at)),
+                QtCore.Qt.MouseButton.LeftButton,
+                QtCore.Qt.MouseButton.LeftButton,
+                QtCore.Qt.KeyboardModifier.NoModifier,
+            ))
+        self.app.processEvents()
+
+    def test_a_double_click_fills_without_stopping_the_picture(self) -> None:
+        """Qt's double click is FOUR events: press, release, double click, release.
+
+        An earlier version of this test sent three of them and so agreed with an
+        earlier version of the code that also assumed three. Both were wrong in the
+        same direction, which is the whole reason this one spells the sequence out:
+        `clicked` comes from the *release*, so an unhandled trailing release makes
+        three toggles out of one gesture, and three is an odd number - the picture
+        ends up in the opposite state, which is exactly what the undo exists to stop.
+        """
+        engine = StubEngine()
+        windows = self.ready(engine)
+        view = windows.views[0]
+        kinds = QtCore.QEvent.Type
+        self.mouse(view, kinds.MouseButtonPress, kinds.MouseButtonRelease,
+                   kinds.MouseButtonDblClick, kinds.MouseButtonRelease)
+        self.assertTrue(view.full_screen)
+        toggles = [call for call in engine.calls if call == ("toggle_play",)]
+        self.assertEqual(
+            len(toggles) % 2, 0,
+            f"{len(toggles)} toggles: the picture is left in the other play state",
+        )
+
+    def test_a_double_click_after_a_drag_undoes_nothing(self) -> None:
+        """A release that ended a drag emits no `clicked`, so there is nothing to undo
+        and undoing it anyway would flip the playback the other way."""
+        engine = StubEngine()
+        windows = self.ready(engine)
+        view = windows.views[0]
+        kinds = QtCore.QEvent.Type
+        self.mouse(view, kinds.MouseButtonPress)
+        view._travelled = True              # as `mouseMoveEvent` sets it on a drag
+        self.mouse(view, kinds.MouseButtonRelease,
+                   kinds.MouseButtonDblClick, kinds.MouseButtonRelease)
+        self.assertEqual(
+            [call for call in engine.calls if call == ("toggle_play",)], [],
+            "a dragged window toggled the playback on its way to full screen",
+        )
+
+    def test_the_window_comes_back_to_where_it_was(self) -> None:
+        """Qt restores the geometry on `showNormal`, but a frameless window that was
+        moved while filled comes back somewhere else, so the rectangle is kept."""
+        self.desk((0, 0, 1920, 1080))
+        windows = self.ready()
+        view = windows.views[0]
+        view.setGeometry(QtCore.QRect(120, 80, 640, 360))
+        self.app.processEvents()
+        before = QtCore.QRect(view.geometry())
+        view.set_full_screen(True)
+        self.app.processEvents()
+        view.set_full_screen(False)
+        self.app.processEvents()
+        self.assertEqual(view.geometry(), before)
+
+    def test_a_window_moved_while_filled_stays_where_it_was_put(self) -> None:
+        """Moving a full-screen window is not a move: it ends the full screen.
+
+        Measured on 2026-11-05, offscreen and on the desktop both - `isFullScreen()`
+        goes False on the `move`, and Qt does *not* put the window back where it was
+        before it filled anything. Whoever moved it has chosen where it goes, so the
+        remembered rectangle is dropped rather than fought over, and the bar is told
+        the full screen is over.
+        """
+        self.desk((0, 0, 1920, 1080))
+        windows = self.ready()
+        view = windows.views[0]
+        view.setGeometry(QtCore.QRect(120, 80, 640, 360))
+        self.app.processEvents()
+        view.set_full_screen(True)
+        self.app.processEvents()
+        filled = QtCore.QRect(view.geometry())
+        view.move(400, 300)
+        self.app.processEvents()
+        self.assertFalse(view.full_screen)
+        self.assertIsNone(view._before_full)
+        self.assertEqual(
+            view.geometry(),
+            QtCore.QRect(400, 300, filled.width(), filled.height()),
+        )
+        self.assertEqual(windows.transport.full_button.kind, "fullscreen")
+
+    def test_closing_while_filled_raises_nothing(self) -> None:
+        """A smoke test, and named as one. `close_all` does not consult the
+        full-screen state at all and `close()` hides a window either way, so this
+        cannot fail for a full-screen reason - what it would catch is the teardown
+        order going wrong around a window in an unusual state, which is worth one
+        test and is not worth a name that promises more."""
+        windows = self.ready()
+        windows.toggle_full_screen()
+        self.app.processEvents()
+        windows.close_all()
+        self.app.processEvents()
+        self.assertTrue(windows.has_closed())
+
+    # -- the button must not be able to lie --------------------------------
+
+    def two_screens(self) -> player_window.PlayerWindows:
+        self.desk((0, 0, 1920, 1080), (1920, 0, 1920, 1080))
+        windows = self.make(
+            StubEngine([(0, 0, 1920, 1080), (1920, 0, 1920, 1080)])
+        )
+        windows.show()
+        self.app.processEvents()
+        return windows
+
+    def test_an_arrangement_does_not_leave_the_button_lying(self) -> None:
+        """Measured on 2026-11-05: Qt drops the full screen the moment an arrangement
+        calls `setGeometry` on the window, and nothing used to tell the bar. The
+        button then offered the way out of a state nobody was in - and taken up, it
+        went *in*, because `toggle_full_screen` asks the views."""
+        for command in ("swap_windows", "cycle_arrangement"):
+            with self.subTest(command=command):
+                windows = self.two_screens()
+                windows.toggle_full_screen()
+                self.app.processEvents()
+                self.assertTrue(windows.full_screen_views())
+                getattr(windows, command)()
+                self.app.processEvents()
+                self.assertEqual(
+                    windows.full_screen_views(),
+                    [],
+                    "the view is still reported as full screen",
+                )
+                self.assertEqual(
+                    windows.transport.full_button.kind,
+                    "fullscreen",
+                    "the button still offers the way out",
+                )
+
+    def test_leaving_by_another_route_is_announced(self) -> None:
+        """The viewer's own window manager owes this program nothing."""
+        windows = self.ready()
+        windows.toggle_full_screen()
+        self.app.processEvents()
+        view = windows.full_screen_views()[0]
+        view.showNormal()          # as a window manager would do it
+        self.app.processEvents()
+        self.assertFalse(view.full_screen)
+        self.assertEqual(windows.transport.full_button.kind, "fullscreen")
+
+    def test_a_state_set_from_outside_is_announced_too(self) -> None:
+        windows = self.ready()
+        windows.views[0].showFullScreen()
+        self.app.processEvents()
+        self.assertEqual(windows.transport.full_button.kind, "fullscreen_exit")
+
+    def test_the_old_rectangle_is_dropped_when_somebody_else_moved_it(self) -> None:
+        """Putting the window back after an arrangement has placed it would undo the
+        arrangement that was just asked for."""
+        windows = self.two_screens()
+        windows.toggle_full_screen()
+        self.app.processEvents()
+        view = windows.full_screen_views()[0]
+        windows.cycle_arrangement()
+        self.app.processEvents()
+        placed = QtCore.QRect(view.geometry())
+        self.assertIsNone(view._before_full)
+        view.set_full_screen(True)
+        self.app.processEvents()
+        view.set_full_screen(False)
+        self.app.processEvents()
+        self.assertEqual(view.geometry(), placed)
+
+    def stranded(self, answer: bool) -> None:
+        """Make `rescue_into` say whether a window is off every screen.
+
+        The real answer cannot be had offscreen: `showFullScreen` uses the real
+        `QScreen`, which `desk()` cannot replace, so a filled window is never on the
+        invented monitors these tests reason about. The decision being checked is
+        ours - come out of full screen only when the monitor that went was this
+        window's - so it is the decision that is driven, not Qt.
+        """
+        previous = player_window.rescue_into
+        self.addCleanup(setattr, player_window, "rescue_into", previous)
+        player_window.rescue_into = (
+            (lambda box, areas: QtCore.QRect(box).translated(10, 10))
+            if answer
+            else (lambda box, areas: QtCore.QRect(box))
+        )
+
+    def test_a_monitor_going_away_under_a_filled_window(self) -> None:
+        """A full-screen window is the one shape `rescue_windows` cannot help: moving
+        it is what ends the full screen, and it would end it without saying where the
+        window had been."""
+        windows = self.ready()
+        windows.toggle_full_screen()
+        self.app.processEvents()
+        self.stranded(True)
+        windows._screen_removed()
+        self.app.processEvents()
+        self.assertFalse(windows.full_screen_views())
+        self.assertEqual(windows.transport.full_button.kind, "fullscreen")
+
+    def test_a_monitor_going_away_somewhere_else_changes_nothing(self) -> None:
+        """`rescue_windows`: "a desk with two monitors where the *other* one was
+        unplugged strands nothing". Unplugging a monitor you were not watching must
+        not take the picture you were watching out of full screen - which an earlier
+        version of this did, because it came out of every full screen on any
+        `screenRemoved`."""
+        windows = self.ready()
+        windows.toggle_full_screen()
+        self.app.processEvents()
+        self.stranded(False)
+        windows._screen_removed()
+        self.app.processEvents()
+        self.assertTrue(windows.full_screen_views())
+        self.assertEqual(windows.transport.full_button.kind, "fullscreen_exit")
+
+    # -- what the review of 2026-11-05 found --------------------------------
+
+    def test_closing_a_filled_window_does_not_leave_it_counting(self) -> None:
+        """`QWidget.hide()` does not clear Qt's full-screen bit.
+
+        So a window the viewer closed - §5 hides the second one rather than stopping
+        its stream - went on answering "I am filling a monitor". The bar then offered
+        the way out of a full screen that was on no screen at all, and taking that
+        offer called `showNormal` on the hidden window, which *showed* it: the window
+        came back from the dead and `Escape` did not close the player.
+        """
+        windows = self.two_screens()
+        view = windows.views[1]
+        view.set_full_screen(True)
+        self.app.processEvents()
+        windows.hide_view(1)
+        self.app.processEvents()
+
+        self.assertEqual(windows.full_screen_views(), [])
+        self.assertEqual(windows.transport.full_button.kind, "fullscreen")
+        self.assertFalse(view.isVisible())
+
+        back: list[int] = []
+        view.showEvent = lambda event, seen=back: seen.append(1)
+        shut: list[int] = []
+        windows.closed.connect(lambda: shut.append(1))
+        _key(windows, QtCore.Qt.Key.Key_Escape)
+        self.app.processEvents()
+        self.assertEqual(back, [], "the closed window came back")
+        self.assertEqual(shut, [1], "Escape did not close the player")
+
+    def test_the_bar_button_does_not_fill_whatever_the_bar_sits_over(self) -> None:
+        """The pointer is on the *bar* when its own button is pressed, and the bar is
+        a separate always-on-top window sitting over whichever view it overlaps. The
+        first version of `_view_in_hand` asked the pointer and filled that one."""
+        windows = self.two_screens()
+        windows._point_at(1)                      # the pointer was last over view 1
+        where = QtCore.QPoint(900, 500)
+        previous = QtGui.QCursor.pos
+        self.addCleanup(setattr, QtGui.QCursor, "pos", previous)
+        QtGui.QCursor.pos = staticmethod(lambda: QtCore.QPoint(where))
+        windows.views[0].setGeometry(QtCore.QRect(where.x() - 40, where.y() - 40, 300, 200))
+        self.app.processEvents()
+        self.assertIs(
+            windows._view_in_hand(), windows.views[0],
+            "a pointer really inside a picture should still win",
+        )
+        windows.views[0].setGeometry(QtCore.QRect(where.x() + 500, where.y() + 500, 300, 200))
+        self.app.processEvents()
+        self.assertIs(
+            windows._view_in_hand(), windows.views[1],
+            "with the pointer over no picture, the last one pointed at is meant",
+        )
+
+    def test_the_bar_is_placed_from_the_view_that_filled(self) -> None:
+        """`transport_spot` places the bar on the screen hosting `boxes[0]` alone, so
+        passing the views in their own order followed `views[0]` whatever had been
+        filled - and on two monitors left the only way out on the other screen."""
+        windows = self.two_screens()
+        filled = windows.views[1]
+        # Recorded as "was it the filled view's own rectangle", not as a rectangle:
+        # offscreen, Qt has not applied the full-screen geometry yet at the moment
+        # the placement runs, so the *value* here is the window's old one. Which view
+        # it came from is the claim being checked, and that is answerable.
+        seen: list[bool] = []
+        windows._place_transport = (
+            lambda boxes, area=None: seen.append(bool(boxes) and boxes[0] == filled.geometry())
+        )
+        filled.set_full_screen(True)
+        self.app.processEvents()
+        self.assertTrue(seen, "the bar was never re-placed")
+        self.assertTrue(
+            seen[0],
+            "the bar was placed from a view that is not the one filling a monitor",
+        )
+
+    def test_a_language_switch_reaches_the_button(self) -> None:
+        """Every other tooltip on the bar is said again on `i18n.notifier.changed`."""
+        windows = self.ready()
+        bar = windows.transport
+        bar.set_full_screen(True)
+        filled = bar.full_button.toolTip()
+        bar.retranslate()
+        self.assertEqual(bar.full_button.toolTip(), filled,
+                         "retranslate forgot which way the button points")
+        bar.set_full_screen(False)
+        bar.retranslate()
+        self.assertEqual(bar.full_button.toolTip(), i18n._("Full screen (F11)"))
+
+    def test_an_empty_player_does_not_offer_to_fill_a_monitor(self) -> None:
+        """`open.empty_player`: the player stands open with nothing loaded, and a
+        button that cannot do anything is worse than no button."""
+        windows = self.make(StubEngine([]))
+        windows.show()
+        self.app.processEvents()
+        self.assertEqual(windows.views, [])
+        self.assertFalse(windows.transport.full_button.isVisible())
+
+    def test_a_refused_arrangement_leaves_the_full_screen_alone(self) -> None:
+        """A call that moves nothing must not have changed anything either."""
+        self.desk((0, 0, 1920, 1080))          # one monitor, two screens recorded
+        windows = self.make(
+            StubEngine([(0, 0, 1920, 1080), (1920, 0, 1920, 1080)])
+        )
+        windows.show()
+        self.app.processEvents()
+        windows.toggle_full_screen()
+        self.app.processEvents()
+        self.assertTrue(windows.full_screen_views())
+        self.assertFalse(windows.apply_one_per_monitor(),
+                         "one screen per monitor should be refused on one monitor")
+        self.app.processEvents()
+        self.assertTrue(
+            windows.full_screen_views(),
+            "a refused arrangement took the window out of full screen anyway",
+        )
+
+    def test_the_player_closing_does_not_go_through_the_full_screen_code(self) -> None:
+        windows = self.ready()
+        windows.toggle_full_screen()
+        self.app.processEvents()
+        windows.close_all()
+        self.app.processEvents()
+        windows.toggle_full_screen()           # must not raise on a dead set
+        self.assertFalse(windows._leave_full_screen())
+
+    def test_one_full_screen_is_announced_once(self) -> None:
+        windows = self.ready()
+        said: list[bool] = []
+        windows.views[0].full_screen_changed.connect(said.append)
+        windows.toggle_full_screen()
+        self.app.processEvents()
+        windows.toggle_full_screen()
+        self.app.processEvents()
+        self.assertEqual(said, [True, False])
+
 if __name__ == "__main__":
     unittest.main()

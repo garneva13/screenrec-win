@@ -127,6 +127,7 @@ from .window import (
     SyncPanel,
     _Engine,
     accept_file_drag,
+    draw_glyph,
     dropped_files,
     format_clock,
     format_offset,
@@ -180,8 +181,9 @@ OPENING_SHARE = 0.78
 #: _carry_waits` spends it on the poll timer.
 CARRY_PATIENCE_MS = 10_000
 
-#: The glyphs this module draws that `window.PLAYER_GLYPHS` and `ui.icons.KINDS` do not
-#: have. Both of those belong to finished modules this feature may not edit.
+#: The glyphs the stage needs beyond `ui.icons.KINDS`. They live in
+#: `window.PLAYER_GLYPHS` and are drawn by `window.draw_glyph`; this name is what the
+#: stage's own checks sweep over.
 STAGE_GLYPHS: tuple[str, ...] = ("fullscreen", "fullscreen_exit")
 
 #: §1's and §2.2's numbers, and §2.2's panel itself, are `window`'s. They are not
@@ -190,7 +192,6 @@ STAGE_GLYPHS: tuple[str, ...] = ("fullscreen", "fullscreen_exit")
 #: a second «−100 мс» button with its own limit is how the two of them come to disagree
 #: about what the viewer just pressed.
 
-_GRID = 24.0
 
 
 def _report(message: str) -> None:
@@ -272,102 +273,34 @@ def draw_stage_glyph(
     colour: QtGui.QColor | str,
     weight: float = 1.9,
 ) -> bool:
-    """Stroke one of `STAGE_GLYPHS` inside `rect`. False for a name it does not know.
+    """Stroke a player glyph inside `rect`. False for a name it does not know.
 
-    Never raises for an unknown name, for the reason `window.draw_glyph` does not: an
-    exception escaping a live `QPainter` takes the interpreter down with it.
+    Note what widened: it used to accept only `STAGE_GLYPHS` and now accepts the whole
+    of `window.PLAYER_GLYPHS`, because it is that function. Nothing on the stage asks
+    it for anything else, and a drawing function that can draw more shapes than its
+    caller uses is not a defect; a second drawing of the same shape would be.
 
-    The same 24x24 grid, round caps and joins as the player's own six glyphs, so the
-    full-screen button sits beside the play button without looking borrowed.
+    This used to draw the brackets itself, on a copy of `window.draw_glyph`'s grid and
+    pen, because the module that owns the player's glyphs was off limits while this one
+    was written. It is not any more - the windows half of the player grew a full-screen
+    button of its own on 2026-11-05 and the two glyphs moved to `window` for it - so
+    this is the one drawing, called from both places. The name stays: it is what the
+    stage's own checks ask for, and "the stage's extra glyphs" is still a true thing to
+    have a word for.
     """
-    box = QtCore.QRectF(rect)
-    if box.isEmpty() or kind not in STAGE_GLYPHS:
-        return False
-    ink = QtGui.QColor(colour)
-    scale = min(box.width(), box.height()) / _GRID
-
-    painter.save()
-    try:
-        painter.translate(
-            box.x() + (box.width() - _GRID * scale) / 2,
-            box.y() + (box.height() - _GRID * scale) / 2,
-        )
-        painter.scale(scale, scale)
-        pen = QtGui.QPen(ink, weight)
-        pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
-        pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(pen)
-        painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-        if kind == "fullscreen":
-            corners = (
-                ((4.0, 9.0), (4.0, 4.0), (9.0, 4.0)),
-                ((15.0, 4.0), (20.0, 4.0), (20.0, 9.0)),
-                ((20.0, 15.0), (20.0, 20.0), (15.0, 20.0)),
-                ((9.0, 20.0), (4.0, 20.0), (4.0, 15.0)),
-            )
-        else:
-            corners = (
-                ((9.0, 4.0), (9.0, 9.0), (4.0, 9.0)),
-                ((15.0, 4.0), (15.0, 9.0), (20.0, 9.0)),
-                ((20.0, 15.0), (15.0, 15.0), (15.0, 20.0)),
-                ((4.0, 15.0), (9.0, 15.0), (9.0, 20.0)),
-            )
-        for bracket in corners:
-            painter.drawPolyline(
-                QtGui.QPolygonF([QtCore.QPointF(x, y) for x, y in bracket])
-            )
-        return True
-    finally:
-        painter.restore()
+    return draw_glyph(painter, kind, rect, colour, weight)
 
 
 class StageButton(PlayerButton):
-    """A `PlayerButton` that can also draw `STAGE_GLYPHS`.
+    """`PlayerButton` under its stage name.
 
-    Written out rather than delegated, for the reason `PlayerButton` itself gives for
-    doing the same to `surfaces.IconButton`: the base class resolves the glyph at the
-    end of its own `_paint` and there is no seam there to replace. The resting, hover
-    and pressed colours below are therefore the same expressions as in
-    `PlayerButton._paint` **deliberately** - if those change, this has to change with
-    them, which is why both are written in terms of `theme.COLOURS` and neither
-    hard-codes a value.
+    It used to repeat `PlayerButton._paint` in full so that it could end on
+    `draw_stage_glyph` instead of `draw_glyph` - the base class resolves the glyph at
+    the very end of its own method and there is no seam there to replace. Now that
+    `window.PLAYER_GLYPHS` carries the two bracket glyphs, the base class draws them,
+    and the copy - with its duplicate of every hover and pressed colour - is gone. The
+    name is kept because the stage's buttons read as stage buttons.
     """
-
-    def _paint(self, painter: QtGui.QPainter) -> None:
-        if self.kind not in STAGE_GLYPHS:
-            super()._paint(painter)
-            return
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        colours = theme.COLOURS
-        box = QtCore.QRectF(0, 0, self.width(), self.height())
-        hovered = self.underMouse() and self.isEnabled()
-
-        background = None
-        if self.isDown():
-            background = colours["line"]
-        elif self.is_on() or hovered:
-            background = colours["hover"]
-        if background is not None:
-            painter.setPen(QtCore.Qt.PenStyle.NoPen)
-            painter.setBrush(QtGui.QColor(background))
-            painter.drawRoundedRect(box, theme.RADIUS["small"], theme.RADIUS["small"])
-
-        if not self.isEnabled():
-            ink = colours["disabled"]
-        elif self.is_on():
-            ink = colours["accent"]
-        elif hovered:
-            ink = colours["text"]
-        else:
-            ink = colours["text_dim"]
-
-        inset = (self.width() - surfaces.ICON) / 2
-        draw_stage_glyph(
-            painter,
-            self.kind,
-            QtCore.QRectF(inset, inset, surfaces.ICON, surfaces.ICON),
-            ink,
-        )
 
 
 # ------------------------------------------------------------- the 1 | 2 switch
@@ -2421,8 +2354,10 @@ class PlayerStage(QtWidgets.QWidget):
         the focus is. Two keys are this window's alone and are named on the controls
         they move rather than left to be discovered: `1` and `2`, which §6 itself
         marks "(stage layouts)" and which the stream switch's tooltip carries, and
-        `F11`, which is not in §6's table at all - the separate-windows half has no
-        main stream to choose and no bordered window to go full screen out of.
+        `F11`. The first two are this window's alone because the other half has no
+        main stream to choose. `F11` is not: both halves have answered it since
+        2026-11-05 and §6's table carries it, each filling what it has - this window,
+        or the one view the viewer is looking at.
         """
         key = event.key()
         letter = event.text().lower()

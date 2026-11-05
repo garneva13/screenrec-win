@@ -224,10 +224,30 @@ Unchanged where it exists, plus:
 | `Space` | play / pause |
 | `←` `→` | skip |
 | `,` `.` | frame step |
+| `Home` `End` | the start, the end |
+| `Ctrl`+`O` | open something else |
 | `1` `2` | make that stream the main one (stage layouts) |
 | `S` | swap the two streams |
 | `L` | cycle the layout |
-| `Esc` | close the player |
+| `F11` | fill a monitor with one picture, and back out again |
+| `Esc` | leave full screen if a monitor is filled, otherwise close the player |
+
+`F11` and the bar's button do the same thing, and so does a double click on the picture.
+Which window fills: the one under the pointer, else the one with focus, else the first.
+Coming back out wins over going in whenever anything is already filled, so one key and
+one button are enough to get out of it from anywhere.
+
+**An arrangement ends a full screen.** `S`, `L`, the schemes and one-screen-per-monitor
+are statements about where the windows go, so a filled window comes out first and is
+laid out with the rest. This is not a choice so much as a fact being owned: Qt drops the
+full screen the moment an arrangement sets that window's geometry, and the thing worth
+writing down is that the player now notices - it used to go on offering the way out of a
+full screen nobody was in, and taking that offer went *in*.
+
+This half of the player had none of it until 2026-11-05 - it was written down as
+deliberate, on the grounds that a frameless window has nothing to go full screen out of
+- and the person using it said plainly that they could not find it. A frameless window
+filling half a monitor is not full screen either.
 
 ---
 

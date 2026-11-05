@@ -73,7 +73,7 @@ Used for the Windows audio device interfaces.
 | | |
 |---|---|
 | `ScreenRec-<version>-win64.zip` | the program, the Qt DLLs, and `tools/ffmpeg/` |
-| `ffmpeg-source-<commit>.zip` | the corresponding source for the ffmpeg binary above |
+| `ffmpeg-source-<commit>.tar.gz` | the corresponding source for the ffmpeg binary above |
 | `SHA256SUMS.txt` | so a download can be checked |
 
 The zip carries `LICENSE`, this file, and `tools/ffmpeg/LICENSE.txt` unchanged.

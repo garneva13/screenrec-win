@@ -44,8 +44,8 @@ say so.
 Until then, check the file yourself rather than trusting this page:
 
 ```
-SHA-256  30cba000182de12954dcb41d9210b48460149934eeb5ff5bf37d3a8ca7a1579f
-size     137,719,801 bytes
+SHA-256  38f0ad1e4166b5c3ffda37f4339997f208ac801b49e31389e0f42d856e784f81
+size     139,213,001 bytes
 ```
 
 ```powershell
@@ -87,7 +87,7 @@ this release.
 | | |
 |---|---|
 | `ScreenRec-0.1.0-setup.exe` | the installer |
-| `ffmpeg-source-ec887b13a8.zip` | the corresponding source for the bundled ffmpeg (`N-128352-gec887b13a8-20261103`) |
+| `ffmpeg-source-ec887b13a8.tar.gz` | the corresponding source for the bundled ffmpeg (`N-128352-gec887b13a8-20261103`) |
 | `SHA256SUMS.txt` | hashes of both |
 
 `THIRD-PARTY-NOTICES.md` in the repository lists everything else and under what terms.
@@ -135,8 +135,8 @@ this release.
 А до тех пор проверьте файл сами, не полагаясь на эту страницу:
 
 ```
-SHA-256  30cba000182de12954dcb41d9210b48460149934eeb5ff5bf37d3a8ca7a1579f
-размер   137 719 801 байт
+SHA-256  38f0ad1e4166b5c3ffda37f4339997f208ac801b49e31389e0f42d856e784f81
+размер   139 213 001 байт
 ```
 
 ```powershell

@@ -1,21 +1,41 @@
 # ScreenRec
 
-A small Windows screen recorder. Recording only — no editor, no timeline, no export
-presets. It captures a monitor, a dragged-out region or a single window to MP4, with the
-microphone and the system sound, and stops on a global hotkey.
+A Windows screen recorder, and a player for what it records. Recording only — no
+editor, no timeline, no export presets, no account, no network. It captures a monitor, a
+dragged-out region, a single window, or **every screen at once**, with the microphone
+and the system sound, and stops on a global hotkey.
 
-Written because the free recorder it replaces would not install, and because the half of
-that program that mattered was the capture.
+Written because the recorder it replaces would not install, and because the half of that
+program that mattered was the capture.
 
-## Running it
+![The recording bar](docs/images/recorder-idle.png)
+
+While it records it gets out of the way — a clock, the size of the file so far, and
+the frame rate it is really achieving:
+
+![Recording](docs/images/recorder-recording.png)
+
+## Installing
+
+Download `ScreenRec-0.1.0-setup.exe` from [Releases](../../releases) and run it. It
+installs both programs into `C:\Program Files\ScreenRec`, puts **ScreenRec** and
+**ScreenRec Player** in the Start menu, and asks once where recordings should go.
+Nothing else is needed: ffmpeg is inside.
+
+The installer is not code-signed yet, so Windows SmartScreen will warn about it. The
+release notes say what the warning looks like and how to check the file's SHA-256 before
+running it.
+
+## Running from source instead
 
 ```
-ScreenRec.cmd              start it
-ScreenRec-console.cmd      same, but keeps a console so tracebacks are visible
+ScreenRec.cmd              the recorder
+ScreenRecPlayer.cmd        the player
+ScreenRec-console.cmd      the recorder, with a console so tracebacks are visible
 ```
 
-Both use the project's own `.venv`. Nothing is installed system-wide and `ffmpeg` is
-bundled under `tools\ffmpeg`.
+All three use the project's own `.venv`. Nothing is installed system-wide and `ffmpeg`
+is bundled under `tools\ffmpeg`.
 
 ## What it records
 
@@ -29,6 +49,34 @@ bundled under `tools\ffmpeg`.
 | Source | …or **every screen at once**: one file per monitor, 0 ms apart |
 | Hotkey | system-wide, default `Ctrl+Alt+R` |
 | Floating bar | a small always-on-top control that moves off the recorded screen |
+
+## Choosing what to record
+
+Three sources, and the cards show what you are about to pick rather than a device name:
+
+![Choosing a source](docs/images/recorder-sources.png)
+
+You can draw on the screen while recording — pen, marker, arrow, shapes, text. The
+drawings reach the file; the toolbar never does:
+
+![Drawing over the screen](docs/images/annotate-over-screen.png)
+
+## The player
+
+A recording of two monitors is two files, not one picture with both screens squashed
+into it. So the player asks how to show them, and works out what will fit on the
+monitors you have in front of you *now* rather than the ones you recorded on:
+
+![Choosing a layout](docs/images/player-chooser.png)
+
+Then it plays them from one clock — one scrubber, one pause, one frame-step, for
+both streams. Look at the timestamps inside the two pictures:
+
+![Two screens in step](docs/images/player-stage.png)
+
+If the two streams did not start at the same instant, a panel on the transport slides
+one against the other by a frame or by 100 ms until they line up.
+`docs/PLAYER_LAYOUTS.md` is the contract for all of it.
 
 ## How it works
 
@@ -59,7 +107,10 @@ clip with each candidate and compares SSIM **per plane**. The headline:
 > before the encoder ever saw it. H.265 4:4:4 reaches 0.998 at a quarter of the size.
 
 So the window offers the trade-off by name rather than a codec list, and shows what a
-minute will cost for the screen you are about to capture. The full table, and the three
+minute will cost for the screen you are about to capture. Once there are real recordings
+to go on, that figure stops being an estimate and says "measured on this machine":
+
+![Settings](docs/images/recorder-settings.png) The full table, and the three
 ways this benchmark lied before it was fixed, are in `docs/HANDOVER.md`.
 
 Two hardware facts, both measured: `av1_nvenc` is listed by this ffmpeg but the RTX 3070
@@ -90,16 +141,28 @@ No GPU, no recording and no visible window is needed for any of them.
 ## Layout
 
 ```
-app\screenrec\      paths, winapi, config, audio, recorder, hotkeys, clicks, overlay
-app\screenrec\ui\   theme, island, main_window
-app\run.pyw         entry point
-tools\ffmpeg\       bundled ffmpeg.exe and ffprobe.exe
-tools\measure_sync.py           audio/video drift
-tools\measure_audio_latency.py  what the audio path alone costs
-tools\benchmark_encoders.py     size against quality, per encoder
-tools\static_review.py          sweep for silent failures and ctypes mistakes
-docs\CONTRACT.md    the module contract and the measured facts behind the design
-docs\HANDOVER.md    state, what is verified, what is not
+app\run.pyw               the recorder
+app\run_player.pyw        the player
+app\screenrec\           paths, winapi, config, audio, recorder, encoders,
+                         capabilities, multi, hotkeys, clicks, overlay, takes,
+                         storage, i18n
+app\screenrec\ui\        theme, surfaces, bar, settings_panel, sources,
+                         thumbnails, countdown, captureframe, tray, icons, app
+app\screenrec\player\    engine, window, stage, panes, chooser, layouts,
+                         library, open
+app\screenrec\annotate\  model, canvas, toolbar, textbox
+tools\ffmpeg\            bundled ffmpeg.exe and ffprobe.exe
+tools\measure_sync.py              audio/video drift
+tools\measure_audio_latency.py     what the audio path alone costs
+tools\benchmark_encoders.py        size against quality, per encoder
+tools\static_review.py             sweep for silent failures and ctypes mistakes
+tools\build_release.py             the two executables, ready to be installed
+tools\verify_*.py                  harnesses that drive the real thing on a screen
+packaging\ScreenRec.iss            the installer
+docs\CONTRACT.md          the module contract and the measured facts behind it
+docs\ENCODERS.md          which encoder this machine will really use, and why
+docs\PLAYER_LAYOUTS.md    how a multi-screen recording is shown
+docs\HANDOVER.md          state, what is verified, what is not
 ```
 
 ## Licence

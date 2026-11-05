@@ -1,0 +1,27 @@
+# Line endings, settled once.
+#
+# This project grew up with both: on 2026-11-04 it had 41 CRLF files against the rest,
+# because each author and each tool wrote whatever it wrote. Nothing was broken by it,
+# but the first commit would otherwise record that mess for ever, and every later diff
+# would be full of lines that only changed their endings.
+#
+# So: text is stored with LF in the repository and checked out with LF. Python, Qt and
+# every editor on Windows read LF without complaint. The exceptions below are the files
+# where Windows itself still wants CRLF.
+* text=auto eol=lf
+
+# Batch files are read by cmd.exe, which is the one thing here that still prefers CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Never touched, never diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.mp4 binary
+*.mkv binary
+*.wav binary
+*.exe binary
+*.dll binary
+*.zip binary

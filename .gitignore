@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+.venv/
+scratch/
+tools/ffmpeg/*.exe
+
+# The author's own interface sketches. They live here because the work grew out of
+# them, and they are not for a public repository.
+docs/design/
+
+# `theme.py` paints its glyphs into small PNGs once and refers to them by url(), under
+# <app data>/ScreenRec/glyphs. A test run with a redirected base drops them here
+# instead. Generated, never source.
+tests/ScreenRec/
+
+# PyInstaller's work, the icons rendered into it, and its output. All three are made
+# from the source in about a minute by `tools/build_release.py`, and `dist/` is 462 MB.
+build/
+dist/

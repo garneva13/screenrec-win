@@ -1,5 +1,7 @@
 # ScreenRec
 
+[![Support the author on Boosty](https://img.shields.io/badge/Boosty-support%20the%20author-FF6B35?style=for-the-badge)](https://boosty.to/garneva13)
+
 A Windows screen recorder, and a player for what it records. Recording only — no
 editor, no timeline, no export presets, no account, no network. It captures a monitor, a
 dragged-out region, a single window, or **every screen at once**, with the microphone
@@ -164,6 +166,11 @@ docs\ENCODERS.md          which encoder this machine will really use, and why
 docs\PLAYER_LAYOUTS.md    how a multi-screen recording is shown
 docs\HANDOVER.md          state, what is verified, what is not
 ```
+
+## Supporting it
+
+ScreenRec is free: no ads, no subscription, no paid edition. If it has been useful,
+you can [support the author on Boosty](https://boosty.to/garneva13).
 
 ## Licence
 

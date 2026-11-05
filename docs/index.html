@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ScreenRec — a screen recorder for Windows, and a player for what it records</title>
+<meta name="description" content="Free Windows screen recorder: a monitor, a region, one window, or every screen at once, with microphone and system sound. Draw over the screen while recording. The player keeps several screens in step. No editor, no account, no network.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="ScreenRec — a screen recorder for Windows, and a player for what it records">
+<meta property="og:description" content="Records a monitor, a region, one window, or every screen at once. Draw over the screen while you record. The player plays several screens from one clock. Free, open source, GPL v3.">
+<meta property="og:url" content="https://garneva13.github.io/screenrec-win/">
+<meta property="og:image" content="https://garneva13.github.io/screenrec-win/images/recorder-idle.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="favicon.png">
+<style>
+  :root{
+    --bg:#f2f3f5; --card:#ffffff; --stroke:#e4e7eb; --text:#14181d; --muted:#5f6b76;
+    --accent:#0b57d0; --ok:#1e8e3e; --warn:#b06000; --radius:20px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#0f1216; --card:#1a1e23; --stroke:#2a3036; --text:#e7eaee; --muted:#9aa5b1; --accent:#a8c7fa; --ok:#6dd58c; --warn:#f5b04c; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+       font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+  .wrap{max-width:860px;margin:0 auto;padding:40px 20px 80px}
+  h1{font-size:34px;line-height:1.15;margin:0 0 8px}
+  h2{font-size:21px;margin:44px 0 14px}
+  .lead{color:var(--muted);margin:0 0 22px;max-width:620px}
+  .brand{display:flex;align-items:center;gap:14px;margin-bottom:10px}
+  .brand h1{margin:0}
+  .logo{width:56px;height:56px;border-radius:15px;display:block;flex:none}
+  .lang{margin-left:auto;font-size:13px;font-weight:700;color:var(--muted);text-decoration:none;
+        border:1px solid var(--stroke);padding:6px 12px;border-radius:999px;background:var(--card)}
+  .btn{display:inline-block;padding:12px 22px;border-radius:999px;text-decoration:none;
+       font-weight:600;font-size:15px;margin:0 8px 8px 0;border:1px solid transparent}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.ghost{border-color:var(--stroke);color:var(--text);background:var(--card)}
+  .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:var(--card);
+        border:1px solid var(--stroke);font-size:12px;color:var(--muted);margin-right:6px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+  .card{background:var(--card);border:1px solid var(--stroke);border-radius:var(--radius);padding:18px}
+  .card h3{margin:0 0 6px;font-size:16px}
+  .card p{margin:0;color:var(--muted);font-size:14px}
+  /* Wide, not phone-shaped: every picture here is a desktop window. */
+  .shot{display:block;width:100%;margin:14px auto 0;border-radius:14px;
+        border:1px solid var(--stroke);box-shadow:0 16px 36px rgba(0,0,0,.12)}
+  /* Never upscale a bar: these are small windows photographed at their real size,
+     and stretching one to the column width turns crisp text into mush. */
+  .shot.bar{max-width:760px;box-shadow:none;border:none}
+  .shot.narrow{max-width:420px;box-shadow:none;border:none}
+  .shot.tall{max-width:300px}
+  .caption{color:var(--muted);font-size:13px;text-align:center;margin:8px 0 0}
+  .split{display:flex;gap:22px;align-items:flex-start;flex-wrap:wrap}
+  .split > div{flex:1 1 300px}
+  ol.steps{padding-left:20px;margin:0}
+  ol.steps li{margin-bottom:12px}
+  code{background:var(--card);border:1px solid var(--stroke);border-radius:6px;padding:2px 6px;font-size:13px}
+  .note{border-left:3px solid var(--warn);padding:10px 14px;background:var(--card);
+        border-radius:0 12px 12px 0;color:var(--muted);font-size:14px}
+  details{background:var(--card);border:1px solid var(--stroke);border-radius:14px;
+          padding:14px 16px;margin-bottom:10px}
+  summary{cursor:pointer;font-weight:600}
+  details p{color:var(--muted);margin:10px 0 0;font-size:14px}
+  footer{margin-top:56px;color:var(--muted);font-size:13px;border-top:1px solid var(--stroke);padding-top:18px}
+  footer a{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="brand">
+    <img class="logo" src="logo.png" alt="ScreenRec">
+    <h1>ScreenRec</h1>
+  </div>
+
+  <p class="lead">A screen recorder for Windows, and a player for what it records. It
+  captures a monitor, a region you drag out, a single window, or <strong>every screen at
+  once</strong>, with the microphone and the system sound. No editor, no account, no
+  network.</p>
+
+  <p>
+    <a class="btn primary" href="https://github.com/garneva13/screenrec-win/releases">Download</a>
+    <a class="btn ghost" href="https://github.com/garneva13/screenrec-win">Source code</a>
+  </p>
+  <p>
+    <span class="pill">Windows 10 2004+ · 64-bit</span>
+    <span class="pill">Free</span>
+    <span class="pill">GPL v3</span>
+  </p>
+
+  <img class="shot bar" src="images/recorder-idle.png"
+       alt="The ScreenRec bar: the screen to record, microphone and system sound, frame rate, format, folder and hotkey">
+
+  <h2>While it records, it gets out of the way</h2>
+  <p>The bar shrinks to a clock, the size of the file so far, and the frame rate it is
+  really achieving — not the one you asked for.</p>
+  <img class="shot narrow" src="images/recorder-recording.png"
+       alt="The bar while recording: stop, pause, 01:36, 118 MB, 60 fps">
+
+  <h2>What it records</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>A whole screen</h3>
+      <p>Any monitor — or all of them at once, one file per screen, started together.</p>
+    </div>
+    <div class="card">
+      <h3>A region</h3>
+      <p>A rectangle you drag out. For when only one corner of the screen matters.</p>
+    </div>
+    <div class="card">
+      <h3>One window</h3>
+      <p>Pick a program from the list and record only that.</p>
+    </div>
+    <div class="card">
+      <h3>Sound</h3>
+      <p>Microphone and the computer's own sound, mixed into one track or kept as two.</p>
+    </div>
+    <div class="card">
+      <h3>The pointer</h3>
+      <p>Drawn or not, with an optional fading ring on every click.</p>
+    </div>
+    <div class="card">
+      <h3>A countdown</h3>
+      <p>A ring before the start, so there is time to clear the screen.</p>
+    </div>
+  </div>
+  <img class="shot" src="images/recorder-sources.png"
+       alt="Choosing a source: cards for each monitor with live thumbnails">
+  <p class="caption">The thumbnails in this picture are a demonstration clip, not the
+  author's desktop.</p>
+
+  <h2>Draw over the screen while you record</h2>
+  <p>Pen, marker, arrow, rectangle, ellipse and text. The drawings reach the file; the
+  toolbar never does.</p>
+  <img class="shot" src="images/annotate-over-screen.png"
+       alt="A screen with an arrow, a highlight, a box and the word 'Right here' drawn over it, and the drawing toolbar below">
+
+  <h2>The player</h2>
+  <p>A recording of two monitors is two files, not one picture with both screens squashed
+  into it. So the player asks how to show them — and works out what fits the monitors you
+  have in front of you <em>now</em>, not the ones you recorded on.</p>
+  <img class="shot" src="images/player-chooser.png"
+       alt="Five ways to show a two-screen recording, each with what it will cost in scale, and one recommended">
+
+  <p>Then it plays them from one clock: one scrubber, one pause, one frame-step, for both
+  streams at once.</p>
+  <img class="shot" src="images/player-stage.png"
+       alt="Two recorded screens side by side in one window, each showing its own clock, with the badge 'both are in step'">
+  <p class="caption">Each picture carries its own clock, burned in when it was made.
+  Measured over a playthrough rather than read off one frame: worst drift between the
+  two streams, 17 ms.</p>
+
+  <p>If the two streams did not start at the same instant, a panel on the transport slides
+  one against the other by a frame or by 100&nbsp;ms until they line up.</p>
+
+  <h2>Settings that say what they mean</h2>
+  <div class="split">
+    <div>
+      <p>No bitrates and no profile names. "Normal — H.265", and a sentence underneath
+      about what it will cost you:</p>
+      <p class="note">About 55 MB a minute at 1920×1080 (3.3 GB an hour) on a busy
+      screen — far less on a quiet one.</p>
+      <p>Once there are real recordings to go on, that figure stops being an estimate and
+      says <em>measured on this machine</em>. A format your machine cannot encode is
+      disabled, with the reason written next to it.</p>
+      <p>Interface in English or Russian, switchable while it runs.</p>
+    </div>
+    <div>
+      <img class="shot tall" src="images/recorder-settings.png"
+           alt="The settings panel: language, preset, video, audio, cursor, output folder and hotkeys">
+    </div>
+  </div>
+
+  <h2>Installing</h2>
+  <ol class="steps">
+    <li>Download <code>ScreenRec-0.1.0-setup.exe</code> from
+      <a href="https://github.com/garneva13/screenrec-win/releases">Releases</a> and run it.</li>
+    <li>Windows will warn you — the installer is not code-signed yet. Click
+      <strong>More info</strong>, then <strong>Run anyway</strong>. The release notes carry
+      the file's SHA-256 so you can check it first.</li>
+    <li>It installs both programs, puts <strong>ScreenRec</strong> and
+      <strong>ScreenRec Player</strong> in the Start menu, and asks once where recordings
+      should go.</li>
+  </ol>
+  <p class="note">Nothing else is needed. Python, Qt and ffmpeg are all inside the
+  installer; nothing is downloaded and nothing is installed system-wide besides the
+  program itself.</p>
+
+  <h2>What it runs on</h2>
+  <div class="grid">
+    <div class="card">
+      <h3>Windows 10 2004 or later</h3>
+      <p>64-bit. The capture uses the Desktop Duplication API, which is where that
+      version requirement comes from.</p>
+    </div>
+    <div class="card">
+      <h3>Any graphics card, or none</h3>
+      <p>It tries every encoder on your machine at first run and keeps the one that
+      actually works — NVIDIA, AMD, Intel, Windows' own, or the processor.</p>
+    </div>
+    <div class="card">
+      <h3>No account, no network</h3>
+      <p>It never connects to anything. There is no telemetry, no update check and
+      nothing to sign in to.</p>
+    </div>
+  </div>
+
+  <h2>Honest limits</h2>
+  <details>
+    <summary>Hardware encoding is tested on NVIDIA only</summary>
+    <p>The code supports AMD (AMF), Intel (QSV) and Windows' own Media Foundation
+    encoders, written from their documented options and guarded so that an unsupported
+    path falls back to the processor rather than failing. But the author has one NVIDIA
+    card and no way to run the others. If your machine takes the processor path when it
+    should not, that is worth a bug report — the settings panel will tell you which
+    encoder it chose and why.</p>
+  </details>
+  <details>
+    <summary>The installer is not signed yet</summary>
+    <p>So SmartScreen warns about it, and will keep warning until enough people have run
+    it or a certificate is in place. A signature through the SignPath Foundation, which
+    signs open-source projects for free, is planned. Until then the release carries the
+    SHA-256 of the file so you can check it yourself.</p>
+  </details>
+  <details>
+    <summary>There is no editor</summary>
+    <p>Deliberately. It records and it plays. The files are ordinary MP4s, so any editor
+    can open them — but what the editor cannot read is the sidecar that says how far
+    apart two screens started, so a multi-screen take has to be lined up by hand there.</p>
+  </details>
+  <details>
+    <summary>Three or more monitors, and display scaling, are unverified</summary>
+    <p>Two monitors are tested thoroughly, including one unplugged mid-playback. Three
+    screens work in the code and in the tests but have never been run on real hardware,
+    and neither has 125 %, 150 % or 200 % display scaling.</p>
+  </details>
+  <details>
+    <summary>Windows only</summary>
+    <p>The capture is the Windows Desktop Duplication API and the system-sound path is
+    WASAPI loopback. Neither exists elsewhere, and nothing here was written with a port
+    in mind.</p>
+  </details>
+
+  <footer>
+    <p>Source: <a href="https://github.com/garneva13/screenrec-win">github.com/garneva13/screenrec-win</a> ·
+    Licensed <strong>GPL v3</strong>, which follows from the bundled ffmpeg: a recorder
+    that must work on a machine with no hardware encoder needs x264, and x264 is GPL.
+    The corresponding ffmpeg source ships with every release.</p>
+    <p>ffmpeg, PySide6, PyAudioWPatch and comtypes are third-party; exact versions,
+    licences and where their source lives are in
+    <a href="https://github.com/garneva13/screenrec-win/blob/main/THIRD-PARTY-NOTICES.md">THIRD-PARTY-NOTICES.md</a>.
+    Not affiliated with Microsoft, NVIDIA, AMD or Intel.</p>
+  </footer>
+
+</div>
+</body>
+</html>

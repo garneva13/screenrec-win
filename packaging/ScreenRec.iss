@@ -1,4 +1,4 @@
-; ScreenRec - the installer.
+﻿; ScreenRec - the installer.
 ;
 ;   "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\ScreenRec.iss
 ;
@@ -13,6 +13,12 @@
 ; prompt, which is the price of a machine-wide install; nothing in the program itself
 ; needs it, since it writes only to its own settings folder and to the folder chosen
 ; below.
+;
+; This file is UTF-8 **with a BOM**. Inno 6.5 compiled the Russian messages correctly
+; without one - measured on 2026-11-05 by compiling the same script both ways and
+; reading the wizard's own window text, which came out right either way - so the BOM
+; fixes nothing today. It is here to say the encoding out loud rather than rely on a
+; compiler being lenient about a file that does not state it.
 ;
 ; **The wizard asks where recordings should go**, and the answer is written to the
 ; registry rather than to anyone's settings file. That is not indirection for its own
@@ -106,16 +112,73 @@ Type: dirifempty; Name: "{app}"
 var
   OutputPage: TInputDirWizardPage;
 
+function RegisteredIn(Root: Integer): String;
+begin
+  if not RegQueryStringValue(Root, 'Software\{#Name}', 'DefaultOutputDir', Result) then
+    Result := '';
+  Result := Trim(Result);
+end;
+
+function FolderFromRegistry: String;
+begin
+  // The answer this page was given last time.
+  //
+  // **Both registry views, and the 64-bit one first.** Setup is a 32-bit program, so a
+  // plain `HKEY_LOCAL_MACHINE` here is the `Wow6432Node` view, while the registry
+  // section above writes through `HKA` with `ArchitecturesInstallIn64BitMode` in force
+  // and lands in the 64-bit one. Reading the wrong view finds nothing and falls
+  // silently through to the built-in suggestion, which is this function failing at the
+  // one job it has - measured on 2026-11-05, with the value plainly present in
+  // `HKLM\Software\ScreenRec` and the page still opening on the suggestion.
+  //
+  // Per-user is asked as well, for a machine that once had a per-user install.
+  Result := '';
+  if IsWin64 then
+    Result := RegisteredIn(HKEY_LOCAL_MACHINE_64);
+  if Result = '' then
+    Result := RegisteredIn(HKEY_LOCAL_MACHINE_32);
+  if (Result = '') and IsWin64 then
+    Result := RegisteredIn(HKEY_CURRENT_USER_64);
+  if Result = '' then
+    Result := RegisteredIn(HKEY_CURRENT_USER_32);
+end;
+
 procedure InitializeWizard;
 var
-  Suggested: String;
+  Suggested, Source: String;
 begin
   // An Inno comment is delimited by braces, so this one cannot be - every constant
   // in this file is written in braces and would close it early. That is what the
   // first attempt did, at line 113 column 16.
-  // The suggestion is built from the profile of whoever started setup: the documents
-  // and videos constants would be the administrator's under an elevated install.
-  Suggested := ExpandConstant('{%USERPROFILE}') + '\Videos\ScreenRec';
+  //
+  // **The page opens on what the last install was told**, and only falls back to the
+  // built-in suggestion when there has been no install. Before this it proposed the
+  // same built-in folder at every upgrade, so somebody who keeps their recordings
+  // elsewhere had to say so again each time.
+  //
+  // **The program's own `settings.json` is deliberately not read**, although it is
+  // the better answer - it is where recordings actually go. Two reasons, the second
+  // decisive. It is not needed: this value is a *proposal*, and
+  // `ui.app.Application._ask_where_to_save` takes it only for a user who has never
+  // chosen a folder, so for anyone who has, a stale value here changes nothing. And
+  // it cannot be read correctly: the file is UTF-8, Pascal Script's `Chr` takes a
+  // byte, and a hand-rolled decoder therefore truncates every character above 255 -
+  // measured on 2026-11-05: a path with Cyrillic in it reached the page with every
+  // letter replaced by its own code point modulo 256, which is neither the path nor
+  // obviously wrong to look at. A folder name on a Russian machine is exactly
+  // the case that breaks, so the branch was taken out rather than left to mangle one
+  // path in ten.
+  Suggested := FolderFromRegistry;
+  Source := 'what the last install was told';
+  if Suggested = '' then
+  begin
+    // The profile of whoever started setup: the documents and videos constants would
+    // be the administrator's under an elevated install.
+    Suggested := ExpandConstant('{%USERPROFILE}') + '\Videos\{#Name}';
+    Source := 'the built-in suggestion';
+  end;
+  Log('ScreenRec: the folder page opens on "' + Suggested + '", from ' + Source + '.');
+
   OutputPage := CreateInputDirPage(
     wpSelectDir,
     ExpandConstant('{cm:OutputCaption}'),
@@ -130,5 +193,5 @@ function OutputFolder(Param: String): String;
 begin
   Result := Trim(OutputPage.Values[0]);
   if Result = '' then
-    Result := ExpandConstant('{%USERPROFILE}') + '\Videos\ScreenRec';
+    Result := ExpandConstant('{%USERPROFILE}') + '\Videos\{#Name}';
 end;

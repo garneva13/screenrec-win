@@ -80,7 +80,7 @@ Contrast is tested (`tests/test_theme.py`), so a new colour needs its ratio chec
   `Tool` flag; `surfaces._no_activate` adds `WS_EX_NOACTIVATE`. Clicking Record must not
   pull the user out of what they were about to demonstrate.
 * Do not `pip install` anything. Interpreter:
-  `B:\ScreenRec\.venv\Scripts\python.exe`. Check Qt work with
+  `.venv\Scripts\python.exe`. Check Qt work with
   `QT_QPA_PLATFORM=offscreen`.
 * Tests are plain `unittest` under `tests/`, runnable headless.
 

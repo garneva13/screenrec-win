@@ -3,8 +3,8 @@
 Started and built 2026-11-03. A Windows screen recorder, **capture only** — no editor, no
 timeline, no export presets. Replaces OpenScreen 1.5.0, which would not install.
 
-**Resume from here.** What is verified is marked so; what is not is marked too. Nothing in
-this project has been committed to git — there is no repository here yet.
+**Start here.** What is verified is marked so; what is not is marked too — this
+document's job is to be honest about the difference rather than to look finished.
 
 ---
 
@@ -13,7 +13,7 @@ this project has been committed to git — there is no repository here yet.
 | | |
 |---|---|
 | Runs | `ScreenRec.cmd` (or `ScreenRec-console.cmd` to see tracebacks) |
-| Python | 3.13.5 in `B:\ScreenRec\.venv`, PySide6 6.12, pyaudiowpatch 0.2.12.9, comtypes |
+| Python | 3.13.5 in the project's `.venv`, PySide6 6.12, pyaudiowpatch 0.2.12.9, comtypes |
 | ffmpeg | bundled, `tools\ffmpeg` — BtbN gpl, N-128352-gec887b13a8-20261103 |
 | Tests | 1961, counted 2026-11-05, `PYTHONPATH=app python -m unittest discover -s tests -q` — all pass, 2 skipped (they want the bundled ffmpeg/ffprobe) |
 | Static sweep | `python tools\static_review.py` — clean |
@@ -602,7 +602,8 @@ file **rewinds it to zero and pushes frame zero**.
 
 A seven-agent read-only audit of the player, with every finding reproduced by a second
 agent and the worst of them re-reproduced here. **None of this is fixed.** They are
-listed so that the next session can start from them rather than find them again.
+listed so that whoever picks the player up next starts from them rather than finding
+them again.
 
 1. **Press play on the last frame and it rewinds and does not play.** Bare Qt restarts
    such a player happily by all three routes tried, so this is in `engine.play`'s own
@@ -641,8 +642,8 @@ listed so that the next session can start from them rather than find them again.
 * Display scaling at 125/150/200 %, more than two screens, and a monitor physically
   unplugged mid-playback are all still unverified; this machine has two screens at
   100 %.
-* Nothing has been packaged. `docs/RELEASE_PLAN.md` holds that plan and its first two
-  steps are the author's to take: a licence decision and `git init`.
+* Packaging is done: `packaging/ScreenRec.iss` builds the installer and
+  `docs/RELEASE_PLAN.md` records the reasoning, including why the licence is GPL v3.
 
 ---
 

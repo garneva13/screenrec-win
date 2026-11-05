@@ -1,6 +1,6 @@
 # Choosing an encoder on a machine nobody has seen
 
-The author's requirement, 2026-11-04:
+The requirement, written down 2026-11-04:
 
 > нужна универсальная программа, которая сможет работать на любом ПК и любой
 > видеокартой и давать оптимальный результат
@@ -195,7 +195,7 @@ def frame_path(encoder, rotate, pix_fmt) -> str: ...
 * `capabilities.try_encoder` stops encoding `testsrc` through a software path and starts
   exercising the real one, using the same two functions. Today it answers "does this
   encoder initialise"; it must answer "does this **pipeline** run", because those differ
-  precisely on the hardware the author does not own.
+  precisely on the hardware that was never available to test on.
 * `config.Profile.encoder` becomes `codec` (`"hevc" | "h264"`). A profile naming
   `hevc_nvenc` on an AMD machine is a lie in the data; the family is chosen once, at
   record time, and the override hack in `ui/app.py:685` and `:718` disappears with it.

@@ -9,7 +9,7 @@ Everything below marked **measured** was verified on this machine on 2026-11-03.
 ## Layout
 
 ```
-B:\ScreenRec\
+the checkout root\
   .venv\                     Python 3.13, PySide6 6.12, pyaudiowpatch, comtypes
   tools\ffmpeg\              ffmpeg.exe, ffprobe.exe (BtbN gpl, N-128352)
   app\screenrec\
@@ -27,7 +27,7 @@ B:\ScreenRec\
   docs\
 ```
 
-Run anything with `B:\ScreenRec\.venv\Scripts\python.exe`. **Do not pip install
+Run anything with `.venv\Scripts\python.exe`. **Do not pip install
 anything** — the venv is shared and already has what is needed.
 
 ## House rules

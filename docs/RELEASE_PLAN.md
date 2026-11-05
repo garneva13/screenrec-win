@@ -1,6 +1,6 @@
 # Giving it away: what has to be true before a stranger can run this
 
-The author's words, 2026-11-04:
+Written down 2026-11-04:
 
 > нужна универсальная программа, которая сможет работать на любом ПК и любой видеокартой
 > и давать оптимальный результат
@@ -12,7 +12,7 @@ plan, and the order is not arbitrary: **step 1 is a blocker, and the rest is pac
 
 ## Built, 2026-11-05
 
-**The author overruled this document's §0 and was right to:** it argued for a portable
+**§0 of this document was overruled, and rightly:** it argued for a portable
 zip first and an installer at 0.2, and the answer was "\u043d\u0443\u0436\u043d\u0430 \u0433\u043e\u0442\u043e\u0432\u0430\u044f
 \u043f\u0440\u043e\u0433\u0440\u0430\u043c\u043c\u0430 ... \u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c \u0434\u043e\u043b\u0436\u0435\u043d \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c \u043d\u0430\u0448 \u043f\u0430\u043a\u0435\u0442
 \u043f\u0440\u043e\u0433\u0440\u0430\u043c\u043c". A folder of files that each have to be started separately is not a
@@ -77,7 +77,7 @@ instead of quietly becoming libx264, and Media Foundation was added as a
 vendor-neutral hardware path. `docs/ENCODERS.md` is the contract. What follows is
 kept because it is the shape of the bug, and the tests are named after it.
 
-This is not a packaging concern. It is a defect that is invisible on the author's machine
+This is not a packaging concern. It is a defect that is invisible on the machine it was written on
 and fires on most other people's, and it must be fixed before anything is published.
 
 The chain, all four links verified in the code on 2026-11-04:
@@ -101,7 +101,7 @@ docstring records for the 4:4:4 case. The user sees "Запись…", then "З�
 остановилась сама" about 200 ms later.
 
 **Who this hits:** every AMD PC, every Intel-only PC, and — because `av1_nvenc` is first
-in the list — every RTX 40-series and newer NVIDIA PC. It does not hit the author's
+in the list — every RTX 40-series and newer NVIDIA PC. It does not hit this
 RTX 3070 Ti, because Ampere has no AV1 encoder and `av1_nvenc` fails the probe, so
 `best()` returns `hevc_nvenc` and the override is a no-op. The README already records
 that fact about Ampere; it is also what has hidden this bug.
@@ -115,7 +115,7 @@ that fact about Ampere; it is also what has hidden this bug.
 - *Make it optimal everywhere* — dispatch per encoder family in `_video_codec_args`
   (`-global_quality` for QSV, `-quality`/`-rc` for AMF, AV1 for the newer NVENC), and
   `_filter_for` taught which families can take a GPU surface and which need system
-  memory. This is what the author actually asked for, and **none of it can be measured
+  memory. This is what was actually asked for, and **none of it can be measured
   on this machine.** It needs an AMD box and an Intel box, or it is being written blind.
 
 Until the second is measured, `best()` must not return a family the recorder cannot
@@ -127,7 +127,7 @@ about ScreenRec.
 ## 2. The licence, decided by the first sentence of this document
 
 The bundled ffmpeg is a BtbN **gpl** build: GPL v3, because of libx264 and libx265. Both
-of the author's public repositories are MIT.
+of the other public repositories here are MIT.
 
 It is tempting to escape by switching to BtbN's **lgpl** build — it has `ddagrab` and all
 the NVENC encoders, and only loses the x264/x265 software path. That escape is closed by
@@ -140,7 +140,7 @@ libx264 — and libx264 is precisely what makes the build GPL.
 from that is paperwork, done once:
 
 - ffmpeg stays a **separate program**, invoked as a subprocess over a command line and a
-  named pipe. Nothing is linked. The author's own code can stay MIT; the release is an
+  named pipe. Nothing is linked. This project's own code could stay MIT; the release is an
   aggregate of an MIT program and an unmodified GPL program.
 - GPL v3 §6 attaches to the binary that is *conveyed*. For a download, §6(d) is the only
   available route — the "written offer valid for three years" of §6(b) is for physical
@@ -155,7 +155,7 @@ from that is paperwork, done once:
   The current `README.md` says PyAudioWPatch is MIT; its own `METADATA` says Apache-2.0,
   so the README is wrong and must be corrected.
 
-A reasonable alternative, if the author would rather not think about any of this again:
+A reasonable alternative, for anyone who would rather not think about any of this again:
 license ScreenRec itself under GPL v3. For a program being given away free it costs
 nothing and ends every argument. It is a preference, not a requirement.
 
@@ -222,7 +222,7 @@ paragraph pointing at the source asset, and an honest paragraph about SmartScree
   $400 buys very little. The right move is to apply to the SignPath Foundation *after*
   there is an OSI licence and a GitHub Actions build — those are its conditions — which
   means after the first release, not before. Until then: say so in the README, publish
-  SHA-256 sums, and link a VirusTotal scan run by the author rather than letting a
+  SHA-256 sums, and link a VirusTotal scan run before release rather than letting a
   frightened user discover one.
 * **An installer, winget, auto-update.** All of them want the installer first, and the
   installer wants the signature first.

@@ -82,6 +82,68 @@ class PanelTestCase(unittest.TestCase):
         self.fired += 1
 
 
+class TheCameraRows(PanelTestCase):
+    """The round trip for the camera section, and the one rule that is not obvious:
+    every camera control is dead while the switch is off."""
+
+    def test_they_come_up_showing_the_settings(self) -> None:
+        self.assertEqual(self.panel.webcam_switch.isChecked(),
+                         self.settings.webcam_enabled)
+        self.assertEqual(self.panel.webcam_corner_combo.currentData(),
+                         self.settings.webcam_corner)
+        self.assertEqual(self.panel.webcam_size_combo.currentData(),
+                         self.settings.webcam_size)
+        self.assertEqual(self.panel.webcam_shape_combo.currentData(),
+                         self.settings.webcam_shape)
+        self.assertEqual(self.panel.webcam_res_combo.currentData(),
+                         self.settings.webcam_resolution)
+        self.assertEqual(self.fired, 0)
+
+    def test_moving_one_writes_it_back_and_says_so(self) -> None:
+        for combo, field, value in (
+            (self.panel.webcam_corner_combo, "webcam_corner", "top_left"),
+            (self.panel.webcam_size_combo, "webcam_size", "large"),
+            (self.panel.webcam_shape_combo, "webcam_shape", "circle"),
+        ):
+            with self.subTest(field=field):
+                before = self.fired
+                combo.setCurrentIndex(combo.findData(value))
+                self.assertEqual(getattr(self.settings, field), value)
+                self.assertGreater(self.fired, before)
+
+    def test_the_size_setting_takes_a_size_not_a_resolution(self) -> None:
+        """`max_height` scales the recording; `webcam_size` is the little window.
+        They sit three rows apart and have been confused before."""
+        self.panel.webcam_size_combo.setCurrentIndex(
+            self.panel.webcam_size_combo.findData("large")
+        )
+        self.assertEqual(self.settings.webcam_size, "large")
+        self.assertEqual(self.settings.max_height, 0)
+
+    def test_automatic_is_the_first_resolution_and_is_an_empty_setting(self) -> None:
+        self.assertEqual(self.panel.webcam_res_combo.itemData(0), "")
+
+    def test_the_whole_section_is_dead_while_the_switch_is_off(self) -> None:
+        self.panel.webcam_switch.setChecked(False)
+        self.qt_app.processEvents()
+        for control in (self.panel.webcam_combo, self.panel.webcam_corner_combo,
+                        self.panel.webcam_size_combo, self.panel.webcam_shape_combo,
+                        self.panel.webcam_res_combo):
+            self.assertFalse(control.isEnabled())
+        self.panel.webcam_switch.setChecked(True)
+        self.qt_app.processEvents()
+        for control in (self.panel.webcam_combo, self.panel.webcam_corner_combo,
+                        self.panel.webcam_size_combo, self.panel.webcam_shape_combo,
+                        self.panel.webcam_res_combo):
+            self.assertTrue(control.isEnabled())
+
+    def test_a_saved_shape_the_build_does_not_know_falls_back(self) -> None:
+        settings = config_mod.Settings(webcam_shape="trapezoid")
+        panel = settings_panel.SettingsPanel(settings)
+        self.assertEqual(panel.webcam_shape_combo.currentData(),
+                         config_mod.DEFAULT_WEBCAM_SHAPE)
+        panel.deleteLater()
+
 class TestBuildsAndShowsTheSettings(PanelTestCase):
     def test_controls_show_the_settings_values(self) -> None:
         settings = self.settings

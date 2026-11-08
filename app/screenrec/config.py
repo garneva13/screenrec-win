@@ -226,6 +226,23 @@ def min_frame(encoder: str) -> tuple[int, int]:
     return MIN_FRAME.get(encoder, UNMEASURED_MIN_FRAME)
 
 
+#: What "record smaller than the screen" offers. 0 is the screen's own size; the rest
+#: are heights, and only ever shrink. Even numbers because the encoders want an even
+#: width and `scale=-2:h` derives it.
+MAX_HEIGHTS: tuple[int, ...] = (0, 1440, 1080, 720)
+
+#: Where the camera sits in the picture, and how much of it it takes. The values are
+#: `webcam.CORNERS` and `webcam.SIZES`; they are spelled again here so that `config`
+#: does not import a module that needs QtMultimedia just to validate a string.
+WEBCAM_CORNERS: tuple[str, ...] = (
+    "top_left", "top_right", "bottom_left", "bottom_right",
+)
+WEBCAM_SIZES: tuple[str, ...] = ("small", "medium", "large")
+WEBCAM_SHAPES: tuple[str, ...] = ("rounded", "circle", "rectangle")
+DEFAULT_WEBCAM_SHAPE = "rounded"
+DEFAULT_WEBCAM_CORNER = "bottom_right"
+DEFAULT_WEBCAM_SIZE = "medium"
+
 AUDIO_MIX = "mix"
 AUDIO_SEPARATE = "separate"
 
@@ -265,6 +282,21 @@ class Settings:
     window_hwnd: int = 0  # the window chosen last; checked for life before use
 
     framerate: int = 60
+    #: Record no taller than this many pixels; 0 is the screen's own size. A screen
+    #: already smaller is left alone rather than scaled up.
+    max_height: int = 0
+    #: Show the camera in a corner of the recording. It is a window on the desktop, so
+    #: it is visible to whoever is sitting at the machine too - see `webcam`.
+    webcam_enabled: bool = False
+    #: The camera's description as Windows reports it, or "" for whichever is first.
+    webcam_device: str = ""
+    webcam_corner: str = DEFAULT_WEBCAM_CORNER
+    webcam_size: str = DEFAULT_WEBCAM_SIZE
+    webcam_shape: str = DEFAULT_WEBCAM_SHAPE
+    #: "WIDTHxHEIGHT" to run the camera in that mode, or "" to choose the smallest one
+    #: that still covers the picture - see `webcam.choose_format`, and the measured
+    #: reason it weighs frame rate first.
+    webcam_resolution: str = ""
     profile: str = DEFAULT_PROFILE  # a key of PROFILES, not an ffmpeg encoder name
     quality_level: str = DEFAULT_QUALITY
     draw_mouse: bool = True
@@ -400,6 +432,21 @@ def _coerce(raw: dict[str, Any]) -> Settings:
     if settings.audio_mode not in (AUDIO_MIX, AUDIO_SEPARATE):
         settings.audio_mode = AUDIO_MIX
     settings.framerate = max(5, min(240, settings.framerate))
+    if settings.max_height not in MAX_HEIGHTS:
+        settings.max_height = 0
+    if settings.webcam_corner not in WEBCAM_CORNERS:
+        settings.webcam_corner = DEFAULT_WEBCAM_CORNER
+    if settings.webcam_size not in WEBCAM_SIZES:
+        settings.webcam_size = DEFAULT_WEBCAM_SIZE
+    if settings.webcam_shape not in WEBCAM_SHAPES:
+        settings.webcam_shape = DEFAULT_WEBCAM_SHAPE
+    # A resolution is only ever a hint: the camera may no longer offer it, and
+    # `choose_format` falls back rather than refusing. Anything shaped wrong is
+    # dropped here so the combo does not show nonsense.
+    text = str(settings.webcam_resolution or "")
+    parts = text.split("x")
+    if not (len(parts) == 2 and all(p.isdigit() and int(p) > 0 for p in parts)):
+        settings.webcam_resolution = ""
     settings.countdown = max(0, min(10, settings.countdown))
     settings.audio_offset_ms = max(-500, min(500, settings.audio_offset_ms))
     settings.auto_stop_minutes = max(0, min(600, settings.auto_stop_minutes))

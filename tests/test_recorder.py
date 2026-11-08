@@ -557,6 +557,72 @@ class BuildCommandVideoTest(unittest.TestCase):
         self.assertEqual(_value_after(args, "-pix_fmt"), "yuv420p")
 
 
+class RecordingSmallerThanTheScreenTest(unittest.TestCase):
+    """Asking for a smaller recording.
+
+    Measured on 2026-11-08 before any of this was written: **no GPU scaler in this
+    build will take ddagrab's frames.** `scale_d3d11`, `scale_d3d12` and both behind
+    `hwmap=derive_device=d3d11va` all refuse with "Unsupported pixel format: (null)".
+    So a smaller picture has to come down through system memory, and the question the
+    code has to get right is *when it is worth doing at all*.
+    """
+
+    def test_a_taller_screen_is_brought_down(self) -> None:
+        source = rec.VideoSource(LANDSCAPE)          # 2560x1440
+        self.assertEqual(rec.scale_for(source, 1080), 1080)
+        chain = rec._filter_for(source, "hevc_nvenc", max_height=1080)
+        self.assertIn("scale=-2:1080", chain)
+        self.assertIn("hwdownload", chain)
+
+    def test_a_screen_already_small_enough_keeps_the_direct_path(self) -> None:
+        """The subtlety worth a test of its own: 1080 on a 1080p monitor must not
+        download, scale by one and arrive at the same picture having paid for it."""
+        small = Monitor(
+            index=0, device_name=r"\.\DISPLAY9", x=0, y=0,
+            width=1920, height=1080, rotation=1, adapter="NVIDIA",
+        )
+        source = rec.VideoSource(small)
+        self.assertEqual(rec.scale_for(source, 1080), 0)
+        self.assertEqual(rec._filter_for(source, "hevc_nvenc", max_height=1080), "")
+
+    def test_exactly_equal_is_not_scaled(self) -> None:
+        self.assertEqual(rec.scale_for(rec.VideoSource(LANDSCAPE), 1440), 0)
+
+    def test_no_limit_changes_nothing(self) -> None:
+        source = rec.VideoSource(LANDSCAPE)
+        self.assertEqual(rec.scale_for(source, 0), 0)
+        self.assertEqual(rec._filter_for(source, "hevc_nvenc", max_height=0), "")
+
+    def test_a_portrait_screen_is_measured_after_its_rotation(self) -> None:
+        """`output_size` is the finished picture, so a portrait 1440x2560 screen is
+        2560 tall and does get scaled - and the scale goes after the transpose."""
+        source = rec.VideoSource(PORTRAIT)
+        self.assertEqual(source.output_size(), (1440, 2560))
+        self.assertEqual(rec.scale_for(source, 1080), 1080)
+        chain = rec._filter_for(source, "hevc_nvenc", max_height=1080)
+        self.assertLess(chain.index("transpose"), chain.index("scale=-2:1080"))
+
+    def test_the_height_reaches_the_command(self) -> None:
+        plan = rec.RecordingPlan(
+            sources=[rec.VideoSource(LANDSCAPE)],
+            outputs=[Path("out.mp4")],
+            max_height=720,
+        )
+        args = rec.build_command("ffmpeg", plan)
+        self.assertTrue(
+            any("scale=-2:720" in a for a in args),
+            "the chosen height never reached ffmpeg",
+        )
+
+    def test_a_height_nobody_offers_is_refused_by_the_settings(self) -> None:
+        """Through the real loading path, which is where a hand-edited settings file
+        with a nonsense height arrives."""
+        self.assertEqual(config._coerce({"max_height": 999}).max_height, 0)
+        self.assertEqual(config._coerce({"max_height": "1080"}).max_height, 0)
+        for height in config.MAX_HEIGHTS:
+            self.assertEqual(config._coerce({"max_height": height}).max_height, height)
+
+
 class EncoderFamilyTest(unittest.TestCase):
     """One per family, and the defect they exist for.
 

@@ -179,6 +179,9 @@ class Application(QtCore.QObject):
         self.countdown = Countdown()
         self.tray = Tray(self)
         self.highlight = None
+        #: The camera overlay while a recording runs, or None. Declared beside the
+        #: click highlight because it has the same life: created at start, gone at stop.
+        self.webcam = None
         self.hotkeys: dict[str, object] = {}
         self.meters = levels_mod.LevelPair()
         self.annotations = None
@@ -1233,6 +1236,7 @@ class Application(QtCore.QObject):
             quality=settings.cq(),
             quality_level=settings.quality_level,
             framerate=settings.framerate,
+            max_height=settings.max_height,
             draw_mouse=settings.draw_mouse,
             layout=recorder.LAYOUT_SINGLE,
             mic_device=mic,
@@ -1257,6 +1261,7 @@ class Application(QtCore.QObject):
             quality=settings.cq(),
             quality_level=settings.quality_level,
             framerate=settings.framerate,
+            max_height=settings.max_height,
             draw_mouse=settings.draw_mouse,
             layout=recorder.LAYOUT_SINGLE,
             mic_device=settings.mic_device if settings.mic_enabled else "",
@@ -1748,6 +1753,8 @@ class Application(QtCore.QObject):
             self._show_frames()
         if self.settings.click_highlight:
             self._start_highlight()
+        if self.settings.webcam_enabled:
+            self._start_webcam()
 
     def _show_frames(self) -> None:
         """Outline everything being recorded - one frame per screen in the set.
@@ -1791,6 +1798,77 @@ class Application(QtCore.QObject):
                     warn=True,
                 )
         self._stop_highlight()
+        self._stop_webcam()
+
+    def _start_webcam(self) -> None:
+        """Put the camera in the corner of whatever is about to be recorded.
+
+        A camera that will not open never stops a recording: the reason goes on the
+        bar and the screen is recorded without it. Losing the take because a USB
+        camera was unplugged would be the worse failure by far.
+        """
+        from .. import webcam as webcam_mod
+
+        area = self._webcam_area()
+        try:
+            self.webcam = webcam_mod.WebcamOverlay()
+            self.webcam.set_placement(
+                self.settings.webcam_corner,
+                self.settings.webcam_size,
+                self.settings.webcam_shape,
+            )
+            if area is not None:
+                self.webcam.set_area(area)
+            problem = self.webcam.start(
+                self.settings.webcam_device, self.settings.webcam_resolution
+            )
+        except Exception as exc:
+            self.webcam = None
+            self._say(
+                lambda: _("The camera is off: {reason}").format(reason=exc), warn=True
+            )
+            return
+        if problem:
+            self.webcam = None
+            self._say(
+                lambda: _("The camera is off: {reason}").format(reason=problem),
+                warn=True,
+            )
+
+    def _webcam_area(self) -> QtCore.QRect | None:
+        """The rectangle the camera should sit in a corner of.
+
+        Whatever is being recorded: the dragged-out region, the window, the monitor -
+        or, for every screen at once, the first of them, because the camera is one
+        picture and it has to land on one of the files.
+        """
+        if self.settings.source_kind == config_mod.SOURCE_ALL_SCREENS:
+            monitors = self.monitors or []
+            if not monitors:
+                return None
+            first = monitors[0]
+            return QtCore.QRect(first.x, first.y, first.width, first.height)
+        source = self._resolve_source()
+        if source is None:
+            return None
+        if source.crop:
+            x, y, width, height = source.crop
+            return QtCore.QRect(x, y, width, height)
+        monitor = source.monitor
+        return QtCore.QRect(monitor.x, monitor.y, monitor.width, monitor.height)
+
+    def _stop_webcam(self) -> None:
+        if self.webcam is None:
+            return
+        try:
+            self.webcam.stop()
+            self.webcam.deleteLater()
+        except Exception as exc:
+            self._say(
+                lambda: _("The camera would not shut down: {reason}").format(reason=exc),
+                warn=True,
+            )
+        self.webcam = None
 
     def _start_highlight(self) -> None:
         from .. import overlay

@@ -46,6 +46,8 @@ is bundled under `tools\ffmpeg`.
 | Source | whole monitor, a region you drag out, or one window |
 | Audio | microphone (DirectShow) and/or system sound (WASAPI loopback), mixed or as two tracks |
 | Cursor | drawn or not; clicks optionally get a fading ring |
+| Camera | optional, in a corner of the recording: four corners, three sizes, rounded rectangle / circle / rectangle, and the camera's own capture resolution chosen for the window or picked by hand - drawn on the desktop, so it costs the capture pipeline nothing |
+| Size | the screen's own, or scaled down to 1440p, 1080p or 720p; never scaled up |
 | Encoder | four measured profiles: H.265, H.265 4:4:4 for sharp text, H.264, x264 |
 | Output | MP4 in `%USERPROFILE%\Videos\ScreenRec`, named by a strftime pattern |
 | Source | …or **every screen at once**: one file per monitor, 0 ms apart |
@@ -146,8 +148,8 @@ No GPU, no recording and no visible window is needed for any of them.
 app\run.pyw               the recorder
 app\run_player.pyw        the player
 app\screenrec\           paths, winapi, config, audio, recorder, encoders,
-                         capabilities, multi, hotkeys, clicks, overlay, takes,
-                         storage, i18n
+                         capabilities, multi, hotkeys, clicks, overlay, webcam,
+                         takes, storage, i18n
 app\screenrec\ui\        theme, surfaces, bar, settings_panel, sources,
                          thumbnails, countdown, captureframe, tray, icons, app
 app\screenrec\player\    engine, window, stage, panes, chooser, layouts,

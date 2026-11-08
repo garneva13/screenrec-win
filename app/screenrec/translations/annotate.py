@@ -20,7 +20,6 @@ RUSSIAN: dict[str, str] = {
     "Marker": "Маркер",
     "Line": "Линия",
     "Arrow": "Стрелка",
-    "Rectangle": "Прямоугольник",
     "Ellipse": "Эллипс",
     "Text": "Текст",
     "Eraser": "Ластик",

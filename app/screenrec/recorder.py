@@ -211,6 +211,9 @@ class RecordingPlan:
     #: numbers. Empty means "not said", and then nothing is measured.
     quality_level: str = ""
     framerate: int = 60
+    #: Record no taller than this, in pixels; 0 keeps every source at its own size.
+    #: Only ever shrinks - see `scale_for`.
+    max_height: int = 0
     draw_mouse: bool = True
     layout: str = LAYOUT_SINGLE
     mic_device: str = ""
@@ -272,6 +275,7 @@ def _filter_for(
     encoder: str,
     pix_fmt: str = "yuv420p",
     force_download: bool = False,
+    max_height: int = 0,
 ) -> str:
     """The per-source filter chain, or '' to stay on the direct GPU path.
 
@@ -287,7 +291,24 @@ def _filter_for(
         rotate=rotation_filter(source.monitor.rotation),
         pix_fmt=pix_fmt,
         force_download=force_download,
+        scale_to=scale_for(source, max_height),
     )
+
+
+def scale_for(source: VideoSource, max_height: int) -> int:
+    """The height to scale this source to, or 0 to leave it alone.
+
+    **Downscale only, and only when it changes something.** A source already at or
+    below the wanted height is left on whatever path it was on - asking for 1080 on a
+    1080p monitor must not drag the recording through system memory to divide by one.
+    A source taller than the limit comes down to it; the width follows.
+    """
+    if max_height <= 0:
+        return 0
+    height = source.output_size()[1]
+    if height <= max_height:
+        return 0
+    return int(max_height)
 
 
 def build_command(
@@ -364,7 +385,9 @@ def build_command(
     video_maps: list[str] = []
 
     for i, source in enumerate(plan.sources):
-        chain = _filter_for(source, plan.encoder, plan.pix_fmt)
+        chain = _filter_for(
+            source, plan.encoder, plan.pix_fmt, max_height=plan.max_height
+        )
         if chain:
             filter_parts.append(f"[{i}:v]{chain}[v{i}]")
             video_maps.append(f"[v{i}]")
@@ -377,7 +400,11 @@ def build_command(
         for i, source in enumerate(plan.sources):
             label = f"c{i}"
             chain = _filter_for(
-                source, plan.encoder, plan.pix_fmt, force_download=True
+                source,
+                plan.encoder,
+                plan.pix_fmt,
+                force_download=True,
+                max_height=plan.max_height,
             )
             filter_parts = [p for p in filter_parts if not p.startswith(f"[{i}:v]")]
             filter_parts.append(f"[{i}:v]{chain}[{label}]")

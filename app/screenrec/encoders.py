@@ -368,6 +368,7 @@ def frame_path(
     rotate: str = "",
     pix_fmt: str = "yuv420p",
     force_download: bool = False,
+    scale_to: int = 0,
 ) -> str:
     """The filter chain between `ddagrab` and the encoder, or `''` to stay on the GPU.
 
@@ -381,7 +382,7 @@ def frame_path(
     handing a d3d11 surface to a CPU encoder and dying.
     """
     family = family_of(encoder)
-    if not force_download and not rotate and pix_fmt == "yuv420p":
+    if not force_download and not rotate and not scale_to and pix_fmt == "yuv420p":
         if family in DIRECT:
             return ""
         if family in MAPPED:
@@ -403,6 +404,12 @@ def frame_path(
     chain = ["hwdownload", "format=bgra"]
     if rotate:
         chain.append(rotate)
+    if scale_to:
+        # After the rotation, so the height is the height of the finished picture, and
+        # `-2` rather than `-1` because every encoder here wants an even width.
+        # Measured 2026-11-08: no GPU scaler in this build will take ddagrab's frames,
+        # so asking for a smaller picture is what puts this chain on the slow path.
+        chain.append(f"scale=-2:{int(scale_to)}:flags=bicubic")
     # Media Foundation takes the d3d11 surface directly, so it reaches here only when
     # something forced the download: a rotated screen, a composite layout, or a chroma
     # format it cannot do anyway. Whatever the reason, from system memory it takes nv12

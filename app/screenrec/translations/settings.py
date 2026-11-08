@@ -26,6 +26,46 @@ RUSSIAN: dict[str, str] = {
     # -- the row labels -------------------------------------------------------
     "Use": "Выбрать",
     "Frame rate": "Частота кадров",
+    "Size": "Размер",
+    # -- the camera -------------------------------------------------------
+    "Camera": "КАМЕРА",
+    "Camera in the corner": "Камера в углу",
+    "The camera is drawn on the screen itself, so it reaches the recording "
+    "the way the click rings do - and so you can see it too while you record.":
+        "Камера рисуется прямо на экране, поэтому попадает в запись так же, как кольца "
+        "от кликов, — и поэтому во время записи вы видите её тоже.",
+    "Which camera": "Какая камера",
+    "First one found": "Первая найденная",
+    "Corner": "Угол",
+    "Camera size": "Размер камеры",
+    "Camera shape": "Форма камеры",
+    "Rounded rectangle": "Прямоугольник со скруглением",
+    "Circle": "Круг",
+    "Camera resolution": "Разрешение камеры",
+    "Choose for me": "Подобрать автоматически",
+    # The camera's own mode: the frame rate is on the label because the biggest mode
+    # is not always the best one - this camera's largest run at 2 fps.
+    "{width}×{height} · {fps} fps": "{width}×{height} · {fps} к/с",
+    "Top left": "Сверху слева",
+    "Top right": "Сверху справа",
+    "Bottom left": "Снизу слева",
+    "Bottom right": "Снизу справа",
+    "Small": "Маленькая",
+    "Medium": "Средняя",
+    "Large": "Большая",
+    "No camera was found on this machine.": "На этом компьютере камера не найдена.",
+    "The camera list could not be read: {reason}":
+        "Не удалось получить список камер: {reason}",
+    "As on screen": "Как на экране",
+    # A height, the way a person says it: «1080p». The number is substituted, so the
+    # string is one entry rather than one per size.
+    "{height}p": "{height}p",
+    "This screen is {screen}p, so nothing is scaled and nothing is saved.":
+        "Этот экран — {screen}p, поэтому ничего не уменьшается и ничего не экономится.",
+    "Scaled down while recording. That costs a copy through system memory, "
+    "and the frame rate held when it was measured.":
+        "Уменьшается прямо при записи. Это стоит одной копии через оперативную память, "
+        "и частота кадров при замере не просела.",
     "Format": "Формат",
     "Quality": "Качество",
     "Microphone": "Микрофон",

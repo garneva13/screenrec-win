@@ -14,8 +14,19 @@ RUSSIAN: dict[str, str] = {
     "ScreenRec - annotations": "ScreenRec — примечания",
     "ScreenRec - select a region": "ScreenRec — выбор области",
     "ScreenRec - click highlight": "ScreenRec — подсветка кликов",
+    "ScreenRec - camera": "ScreenRec — камера",
+    "The camera could not be started: {reason}":
+        "Камеру не удалось запустить: {reason}",
+    "The camera stopped: {reason}": "Камера остановилась: {reason}",
+    "The camera is off: {reason}": "Камера выключена: {reason}",
+    "The camera would not shut down: {reason}":
+        "Камеру не удалось выключить: {reason}",
     "ScreenRec - capture frame": "ScreenRec — рамка записи",
     "ScreenRec player": "ScreenRec — плеер",
     # One player window per screen; `name` is that screen's own label.
     "ScreenRec - {name}": "ScreenRec — {name}",
+    # Said by the annotation toolbar about a drawn shape and by the settings about the
+    # camera's outline. One English word, one Russian word, so one key here rather than
+    # the same line in two blocks.
+    "Rectangle": "Прямоугольник",
 }

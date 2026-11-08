@@ -21,6 +21,12 @@ the checkout root\
     hotkeys.py    TODO
     clicks.py     TODO   low-level mouse hook
     overlay.py    TODO   region selector + click highlight
+    webcam.py     DONE   the camera in a corner, drawn on the desktop so the
+                         capture picks it up - see its own docstring for why.
+                         Corner, size, outline (rounded / circle / rectangle)
+                         and the camera's own capture mode; the automatic mode
+                         weighs frame rate before size, because this camera's
+                         two largest modes run at 2 fps
     ui/theme.py   TODO
     ui/main_window.py  TODO (assembled last)
   tests\

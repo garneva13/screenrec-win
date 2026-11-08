@@ -396,6 +396,16 @@ class SettingsPanel(surfaces.FloatingSurface):
         self.fps_spin.setFixedWidth(CONTROL_WIDTH)
         outer.addWidget(self._row("Frame rate", self.fps_spin))
 
+        self.size_combo = self._combo()
+        self._fill(self.size_combo, self._size_items())
+        outer.addWidget(self._row("Size", self.size_combo))
+
+        #: What the chosen size will really do, which depends on the screen: on a
+        #: 1080p monitor "1080p" changes nothing, and saying so is better than leaving
+        #: somebody to wonder why the file is the same size.
+        self.size_note = self._note("")
+        outer.addWidget(self.size_note)
+
         self.profile_combo = self._combo()
         self._fill(self.profile_combo, self._profile_items())
         outer.addWidget(self._row("Format", self.profile_combo))
@@ -475,6 +485,37 @@ class SettingsPanel(surfaces.FloatingSurface):
         )
         outer.addWidget(self.tracks_note)
         outer.addSpacing(10)
+
+        outer.addWidget(self._section("Camera"))
+        self.webcam_switch = Switch()
+        self.webcam_switch.setToolTip(
+            _("The camera is drawn on the screen itself, so it reaches the recording "
+              "the way the click rings do - and so you can see it too while you record.")
+        )
+        outer.addWidget(self._row("Camera in the corner", self.webcam_switch))
+
+        self.webcam_combo = self._combo()
+        outer.addWidget(self._row("Which camera", self.webcam_combo))
+
+        self.webcam_corner_combo = self._combo()
+        self._fill(self.webcam_corner_combo, self._corner_items())
+        outer.addWidget(self._row("Corner", self.webcam_corner_combo))
+
+        self.webcam_size_combo = self._combo()
+        self._fill(self.webcam_size_combo, self._webcam_size_items())
+        outer.addWidget(self._row("Camera size", self.webcam_size_combo))
+
+        self.webcam_shape_combo = self._combo()
+        self._fill(self.webcam_shape_combo, self._webcam_shape_items())
+        outer.addWidget(self._row("Camera shape", self.webcam_shape_combo))
+
+        self.webcam_res_combo = self._combo()
+        outer.addWidget(self._row("Camera resolution", self.webcam_res_combo))
+
+        #: Empty, or why there is no camera to choose from.
+        self.webcam_note = self._note("")
+        self.webcam_note.setVisible(False)
+        outer.addWidget(self.webcam_note)
 
         outer.addWidget(self._section("More"))
         self.cursor_switch = Switch()
@@ -687,6 +728,13 @@ class SettingsPanel(surfaces.FloatingSurface):
         self.close_button.clicked.connect(self._close)
         self.language_combo.currentIndexChanged.connect(self._on_language)
         self.fps_spin.valueChanged.connect(self._on_framerate)
+        self.size_combo.currentIndexChanged.connect(self._on_size)
+        self.webcam_switch.toggled.connect(self._on_webcam_enabled)
+        self.webcam_combo.currentIndexChanged.connect(self._on_webcam_device)
+        self.webcam_corner_combo.currentIndexChanged.connect(self._on_webcam_corner)
+        self.webcam_size_combo.currentIndexChanged.connect(self._on_webcam_size)
+        self.webcam_shape_combo.currentIndexChanged.connect(self._on_webcam_shape)
+        self.webcam_res_combo.currentIndexChanged.connect(self._on_webcam_resolution)
         self.profile_combo.currentIndexChanged.connect(self._on_profile)
         self.quality_combo.currentIndexChanged.connect(self._on_quality)
         self.mic_combo.currentIndexChanged.connect(self._on_mic)
@@ -955,6 +1003,21 @@ class SettingsPanel(surfaces.FloatingSurface):
             )
             self.language_combo.setCurrentIndex(max(0, index))
             self.fps_spin.setValue(settings.framerate)
+            index = self.size_combo.findData(settings.max_height)
+            self.size_combo.setCurrentIndex(max(0, index))
+            self.webcam_switch.setChecked(bool(settings.webcam_enabled))
+            self._fill_cameras()
+            index = self.webcam_combo.findData(settings.webcam_device)
+            self.webcam_combo.setCurrentIndex(max(0, index))
+            index = self.webcam_corner_combo.findData(settings.webcam_corner)
+            self.webcam_corner_combo.setCurrentIndex(max(0, index))
+            index = self.webcam_size_combo.findData(settings.webcam_size)
+            self.webcam_size_combo.setCurrentIndex(max(0, index))
+            index = self.webcam_shape_combo.findData(settings.webcam_shape)
+            self.webcam_shape_combo.setCurrentIndex(max(0, index))
+            self._fill_resolutions()
+            index = self.webcam_res_combo.findData(settings.webcam_resolution)
+            self.webcam_res_combo.setCurrentIndex(max(0, index))
             index = self.profile_combo.findData(settings.profile)
             self.profile_combo.setCurrentIndex(max(0, index))
             index = self.quality_combo.findData(settings.quality_level)
@@ -998,6 +1061,9 @@ class SettingsPanel(surfaces.FloatingSurface):
         size = (max(1, int(width)), max(1, int(height)))
         if size != self._capture_size:
             self._capture_size = size
+            # The size note says what the chosen height does to *this* screen, so it
+            # is wrong the moment the screen changes.
+            self._write_size_note()
             self._update_estimate()
 
     def capture_size(self) -> tuple[int, int]:
@@ -1099,6 +1165,154 @@ class SettingsPanel(surfaces.FloatingSurface):
         field.setText(getattr(self.settings, attribute))
         self._say_hotkey("")
         self._write()
+
+    def _size_items(self) -> list[tuple[str, object]]:
+        """The sizes, largest first, with the screen's own size at the top."""
+        items: list[tuple[str, object]] = [(_("As on screen"), 0)]
+        for height in config_mod.MAX_HEIGHTS:
+            if height:
+                items.append((_("{height}p").format(height=height), height))
+        return items
+
+    def _on_size(self, _index: int) -> None:
+        value = self.size_combo.currentData()
+        self.settings.max_height = int(value) if value else 0
+        self._write_size_note()
+        self.changed.emit()
+
+    def _write_size_note(self) -> None:
+        """One line on what this choice does to the screen that is about to be captured.
+
+        Three different things to say, and the middle one is the reason this note
+        exists: a size at or above the screen's own is not an error and not a smaller
+        file either, it simply does nothing.
+        """
+        height = int(self.settings.max_height or 0)
+        if not height:
+            self.size_note.setText("")
+            self.size_note.setVisible(False)
+            return
+        self.size_note.setVisible(True)
+        screen = int(self._capture_size[1] or 0)
+        if screen and screen <= height:
+            self.size_note.setText(
+                _("This screen is {screen}p, so nothing is scaled and nothing is saved.")
+                .format(screen=screen)
+            )
+            return
+        self.size_note.setText(
+            _("Scaled down while recording. That costs a copy through system memory, "
+              "and the frame rate held when it was measured.")
+        )
+
+    def _corner_items(self) -> list[tuple[str, object]]:
+        return [
+            (_("Top left"), "top_left"),
+            (_("Top right"), "top_right"),
+            (_("Bottom left"), "bottom_left"),
+            (_("Bottom right"), "bottom_right"),
+        ]
+
+    def _webcam_size_items(self) -> list[tuple[str, object]]:
+        return [(_("Small"), "small"), (_("Medium"), "medium"), (_("Large"), "large")]
+
+    def _fill_cameras(self) -> None:
+        """List the cameras Windows reports, or say there are none.
+
+        The import is late on purpose: `webcam` pulls in QtMultimedia, and a settings
+        window that has never been opened should not pay for a camera stack.
+        """
+        try:
+            from .. import webcam as webcam_mod
+
+            found = webcam_mod.cameras()
+        except Exception as exc:  # noqa: BLE001 - somebody else's hardware
+            found = []
+            self.webcam_note.setText(
+                _("The camera list could not be read: {reason}").format(reason=exc)
+            )
+            self.webcam_note.setVisible(True)
+        else:
+            self.webcam_note.setVisible(not found)
+            if not found:
+                self.webcam_note.setText(_("No camera was found on this machine."))
+        items: list[tuple[str, object]] = [(_("First one found"), "")]
+        for device in found:
+            items.append((device.description(), device.description()))
+        self._fill(self.webcam_combo, items)
+
+    def _on_webcam_enabled(self, on: bool) -> None:
+        self.settings.webcam_enabled = bool(on)
+        self._update_enabled()
+        self.changed.emit()
+
+    def _webcam_shape_items(self) -> list[tuple[str, object]]:
+        return [
+            (_("Rounded rectangle"), "rounded"),
+            (_("Circle"), "circle"),
+            (_("Rectangle"), "rectangle"),
+        ]
+
+    def _fill_resolutions(self) -> None:
+        """The chosen camera's own modes, with the frame rate each can really do.
+
+        The frame rate is on the label on purpose. This camera's two largest modes run
+        at 2 fps - measured - so a list of bare resolutions would invite somebody to
+        pick the biggest and end up with a slide show in the corner of their lesson.
+        """
+        items: list[tuple[str, object]] = [(_("Choose for me"), "")]
+        try:
+            from .. import webcam as webcam_mod
+
+            device = webcam_mod.camera_named(self.settings.webcam_device)
+            modes = webcam_mod.resolutions_of(device) if device is not None else []
+        except Exception:  # noqa: BLE001 - somebody else's hardware
+            modes = []
+        for width, height, rate in modes:
+            items.append((
+                _("{width}×{height} · {fps} fps").format(
+                    width=width, height=height, fps=int(round(rate))
+                ),
+                f"{width}x{height}",
+            ))
+        self._fill(self.webcam_res_combo, items)
+
+    def _on_webcam_device(self, _index: int) -> None:
+        value = self.webcam_combo.currentData()
+        self.settings.webcam_device = str(value or "")
+        # A different camera has different modes, and the one that was chosen may not
+        # exist on it.
+        was = self.settings.webcam_resolution
+        self._fill_resolutions()
+        index = self.webcam_res_combo.findData(was)
+        if index < 0:
+            self.settings.webcam_resolution = ""
+            index = 0
+        self.webcam_res_combo.setCurrentIndex(index)
+        self.changed.emit()
+
+    def _on_webcam_shape(self, _index: int) -> None:
+        value = self.webcam_shape_combo.currentData()
+        if value:
+            self.settings.webcam_shape = str(value)
+            self.changed.emit()
+
+    def _on_webcam_resolution(self, _index: int) -> None:
+        value = self.webcam_res_combo.currentData()
+        self.settings.webcam_resolution = str(value or "")
+        self.changed.emit()
+
+    def _on_webcam_corner(self, _index: int) -> None:
+        value = self.webcam_corner_combo.currentData()
+        if value:
+            self.settings.webcam_corner = str(value)
+            self.changed.emit()
+
+    def _on_webcam_size(self, _index: int) -> None:
+        value = self.webcam_size_combo.currentData()
+        if value:
+            self.settings.webcam_size = str(value)
+            self.changed.emit()
 
     def _on_framerate(self, value: int) -> None:
         if self._loading:
@@ -1271,6 +1485,14 @@ class SettingsPanel(surfaces.FloatingSurface):
         both = self.settings.mic_enabled and self.settings.system_audio_enabled
         self.tracks_combo.setEnabled(both)
         self.tracks_note.setVisible(not both)
+        # Which camera, which corner and how big mean nothing with the camera off, and
+        # a live control under a switch that is off is an invitation to wonder why it
+        # does nothing.
+        on = bool(self.settings.webcam_enabled)
+        for control in (self.webcam_combo, self.webcam_corner_combo,
+                        self.webcam_size_combo, self.webcam_shape_combo,
+                        self.webcam_res_combo):
+            control.setEnabled(on)
         self._update_estimate()
 
     def _update_estimate(self) -> None:

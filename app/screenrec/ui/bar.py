@@ -727,6 +727,10 @@ class Bar(surfaces.FloatingSurface):
     system_toggled = QtCore.Signal(bool)
     clicks_toggled = QtCore.Signal(bool)
     mic_menu_requested = QtCore.Signal()
+    #: The camera went on or off. Unlike the other two toggles this one means something
+    #: *during* a take as well, so it is emitted from both rows.
+    camera_toggled = QtCore.Signal(bool)
+    camera_menu_requested = QtCore.Signal()
     system_menu_requested = QtCore.Signal()
     fps_clicked = QtCore.Signal()
     format_clicked = QtCore.Signal()
@@ -816,8 +820,12 @@ class Bar(surfaces.FloatingSurface):
         self.system_button = ToggleButton(
             "speaker_off", pick("bar.system_sound", "System sound")
         )
+        self.camera_button = ToggleButton(
+            "camera_off", pick("bar.camera", "Camera")
+        )
         self.clicks_button = ToggleButton("pointer", _("Cursor and clicks"))
-        for button in (self.mic_button, self.system_button, self.clicks_button):
+        for button in (self.mic_button, self.system_button, self.camera_button,
+                       self.clicks_button):
             self.toggles.add(button)
         self.mic_button.clicked.connect(
             lambda: self._toggle(self.mic_button, self.mic_toggled)
@@ -828,6 +836,10 @@ class Bar(surfaces.FloatingSurface):
         self.clicks_button.clicked.connect(
             lambda: self._toggle(self.clicks_button, self.clicks_toggled)
         )
+        self.camera_button.clicked.connect(
+            lambda: self._toggle(self.camera_button, self.camera_toggled)
+        )
+        self.camera_button.menu_requested.connect(self.camera_menu_requested.emit)
         self.mic_button.menu_requested.connect(self.mic_menu_requested.emit)
         self.system_button.menu_requested.connect(self.system_menu_requested.emit)
         # The pointer toggle has no device list, so its chevron opens the settings
@@ -928,6 +940,18 @@ class Bar(surfaces.FloatingSurface):
         line.addWidget(self.detail)
         line.addStretch(1)
 
+        # The one setting worth changing mid-take: the camera sometimes sits on top of
+        # the thing being demonstrated, and it can be taken away without touching the
+        # recording. Its menu opens the same device list as the idle row's.
+        self.camera_button_rec = ToggleButton(
+            "camera_off", pick("bar.camera", "Camera")
+        )
+        self.camera_button_rec.clicked.connect(
+            lambda: self._toggle(self.camera_button_rec, self.camera_toggled)
+        )
+        self.camera_button_rec.menu_requested.connect(self.camera_menu_requested.emit)
+        line.addWidget(self.camera_button_rec)
+
         self.discard_button = surfaces.IconButton("trash", _("Stop and discard"))
         self.discard_button.clicked.connect(self.discard_requested.emit)
         line.addWidget(self.discard_button)
@@ -946,6 +970,10 @@ class Bar(surfaces.FloatingSurface):
             self.meter.set_active(button.is_on())
         elif button is self.system_button:
             button.set_kind("speaker" if button.is_on() else "speaker_off")
+        elif button in (self.camera_button, self.camera_button_rec):
+            # Two buttons, one setting: the other row has to agree, or switching the
+            # camera off while recording would leave the idle row claiming it is on.
+            self.set_camera(button.is_on())
         signal.emit(button.is_on())
 
     # ------------------------------------------------------------------- state
@@ -963,13 +991,22 @@ class Bar(surfaces.FloatingSurface):
         """Turn the chip's chevron while its popover is up."""
         self.source_chip.set_open(open_)
 
-    def set_toggles(self, mic: bool, system: bool, clicks: bool) -> None:
+    def set_toggles(
+        self, mic: bool, system: bool, clicks: bool, camera: bool = False
+    ) -> None:
         self.mic_button.set_on(mic)
         self.mic_button.set_kind("microphone" if mic else "microphone_off")
         self.system_button.set_on(system)
         self.system_button.set_kind("speaker" if system else "speaker_off")
         self.clicks_button.set_on(clicks)
+        self.set_camera(camera)
         self.meter.set_active(mic)
+
+    def set_camera(self, on: bool) -> None:
+        """Both camera buttons at once - the idle row's and the recording row's."""
+        for button in (self.camera_button, self.camera_button_rec):
+            button.set_on(on)
+            button.set_kind("camera" if on else "camera_off")
 
     def set_quick(self, fps_text: str, format_text: str) -> None:
         self.fps_pill.set_text(fps_text)

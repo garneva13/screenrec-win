@@ -59,6 +59,19 @@ LOOPBACKS = [
 ]
 
 
+class FakeCamera:
+    """What `webcam.cameras()` returns, as far as the panel is concerned."""
+
+    def __init__(self, description: str) -> None:
+        self._description = description
+
+    def description(self) -> str:
+        return self._description
+
+
+CAMERAS = (FakeCamera("HD Pro Webcam C922"), FakeCamera("Integrated Camera"))
+
+
 class PanelTestCase(unittest.TestCase):
     """Shared fixture: a themed application and a panel over a real `Settings`."""
 
@@ -68,6 +81,7 @@ class PanelTestCase(unittest.TestCase):
         theme.apply(cls.qt_app)
 
     def setUp(self) -> None:
+        self._fake_cameras()
         self.settings = config_mod.Settings()
         self.panel = settings_panel.SettingsPanel(self.settings)
         self.panel.refresh_devices(MICS, LOOPBACKS)
@@ -77,9 +91,43 @@ class PanelTestCase(unittest.TestCase):
     def tearDown(self) -> None:
         self.panel.deleteLater()
         self.qt_app.processEvents()
+        # `processEvents` does **not** run deferred deletions - Qt only delivers
+        # DeferredDelete when an event loop level exits, and there is no loop here. So
+        # without this every window ever built in this file stays alive, listening to
+        # `i18n.notifier`, and each language switch retranslates all of them: measured
+        # on 2026-11-08, the module went from 46 s to over 900 s as the count grew.
+        self.qt_app.sendPostedEvents(None, QtCore.QEvent.Type.DeferredDelete)
+
+    def _fake_cameras(self) -> None:
+        """Two cameras that are not on this machine, for the length of one test.
+
+        Enumerating the real ones opens the device: measured at up to 40 s for one
+        test on 2026-11-08, and the list differs from machine to machine, so a test
+        that asks is both slow and not a test.
+        """
+        from screenrec import webcam as webcam_mod
+
+        patches = (
+            mock.patch.object(webcam_mod, "cameras", lambda: list(CAMERAS)),
+            mock.patch.object(webcam_mod, "camera_named", lambda _name: None),
+            mock.patch.object(webcam_mod, "resolutions_of", lambda _device: []),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def _count(self) -> None:
         self.fired += 1
+
+    def _choose(self, combo, value) -> None:
+        """Pick a value from a list by what it means, not by where it happens to sit."""
+        index = combo.findData(value)
+        self.assertGreaterEqual(index, 0, f"{value!r} is not on the list")
+        combo.setCurrentIndex(index)
+
+    def _estimate(self) -> str:
+        """Both lines of the estimate box, which is one sentence in two weights."""
+        return f"{self.panel.estimate_label.text()} {self.panel.estimate_note.text()}"
 
 
 class TheCameraRows(PanelTestCase):
@@ -147,7 +195,7 @@ class TheCameraRows(PanelTestCase):
 class TestBuildsAndShowsTheSettings(PanelTestCase):
     def test_controls_show_the_settings_values(self) -> None:
         settings = self.settings
-        self.assertEqual(self.panel.fps_spin.value(), settings.framerate)
+        self.assertEqual(self.panel.fps_combo.currentData(), settings.framerate)
         self.assertEqual(self.panel.profile_combo.currentData(), settings.profile)
         self.assertEqual(
             self.panel.profile_combo.currentText(),
@@ -158,7 +206,7 @@ class TestBuildsAndShowsTheSettings(PanelTestCase):
         self.assertEqual(self.panel.cursor_switch.isChecked(), settings.draw_mouse)
         self.assertEqual(self.panel.clicks_switch.isChecked(), settings.click_highlight)
         self.assertEqual(self.panel.bar_switch.isChecked(), settings.show_island)
-        self.assertEqual(self.panel.countdown_spin.value(), settings.countdown)
+        self.assertEqual(self.panel.countdown_combo.currentData(), settings.countdown)
         self.assertEqual(
             self.panel.folder_edit.text(), str(settings.resolved_output_dir())
         )
@@ -181,12 +229,12 @@ class TestBuildsAndShowsTheSettings(PanelTestCase):
         panel.changed.connect(lambda: fired.append(1))
         panel.refresh_devices(MICS, LOOPBACKS)
         self.assertEqual(fired, [])
-        self.assertEqual(panel.fps_spin.value(), 30)
+        self.assertEqual(panel.fps_combo.currentData(), 30)
         self.assertEqual(panel.profile_combo.currentData(), "hevc444")
         self.assertEqual(panel.quality_combo.currentData(), "best")
         self.assertEqual(panel.mic_combo.currentText(), "Line In (Realtek)")
         self.assertEqual(panel.system_combo.currentData(), 9)
-        self.assertEqual(panel.countdown_spin.value(), 3)
+        self.assertEqual(panel.countdown_combo.currentData(), 3)
         self.assertFalse(panel.cursor_switch.isChecked())
         self.assertFalse(panel.bar_switch.isChecked())
         panel.deleteLater()
@@ -280,7 +328,7 @@ class TestDevicesAgreeWithTheSettings(PanelTestCase):
 
 class TestWritesBack(PanelTestCase):
     def test_frame_rate(self) -> None:
-        self.panel.fps_spin.setValue(30)
+        self._choose(self.panel.fps_combo, 30)
         self.assertEqual(self.settings.framerate, 30)
         self.assertEqual(self.fired, 1)
 
@@ -362,7 +410,7 @@ class TestWritesBack(PanelTestCase):
         self.assertEqual(self.fired, 1)
 
     def test_countdown(self) -> None:
-        self.panel.countdown_spin.setValue(5)
+        self._choose(self.panel.countdown_combo, 5)
         self.assertEqual(self.settings.countdown, 5)
         self.assertEqual(self.fired, 1)
 
@@ -380,10 +428,14 @@ class TestWritesBack(PanelTestCase):
         original = config_mod.save_settings
         config_mod.save_settings = lambda *a, **k: calls.append(a) or ""  # type: ignore
         try:
-            self.panel.fps_spin.setValue(24)
+            self._choose(self.panel.fps_combo, 24)
             self.panel.cursor_switch.click()
-            self.panel.hotkey_edit.setText("Ctrl+Shift+F9")
-            self.panel.hotkey_edit.editingFinished.emit()
+            self.panel.hotkey_edit.arm()
+            QTest.keyClick(
+                self.panel.hotkey_edit, QtCore.Qt.Key.Key_F9,
+                QtCore.Qt.KeyboardModifier.ControlModifier
+                | QtCore.Qt.KeyboardModifier.ShiftModifier,
+            )
         finally:
             config_mod.save_settings = original  # type: ignore[assignment]
         self.assertEqual(calls, [])
@@ -391,52 +443,121 @@ class TestWritesBack(PanelTestCase):
 
 
 class TestHotkey(PanelTestCase):
-    def test_invalid_text_is_refused_in_words_and_changes_nothing(self) -> None:
-        before = self.settings.hotkey
-        self.panel.hotkey_edit.setText("Banana")
-        self.panel.hotkey_edit.editingFinished.emit()
-        self.assertEqual(self.settings.hotkey, before)
-        self.assertEqual(self.fired, 0)
-        self.assertTrue(self.panel.hotkey_problem.isVisibleTo(self.panel))
-        message = self.panel.hotkey_problem.text()
-        self.assertIn("Banana", message)
-        self.assertIn("Ctrl+Alt+R", message)
-        self.assertIn(before, message)
+    """The boxes read a key press. Several things have to be true of that.
 
-    def test_an_empty_box_is_refused_too(self) -> None:
-        before = self.settings.hotkey
-        self.panel.hotkey_edit.setText("   ")
-        self.panel.hotkey_edit.editingFinished.emit()
-        self.assertEqual(self.settings.hotkey, before)
-        self.assertEqual(self.fired, 0)
-        self.assertIn("empty", self.panel.hotkey_problem.text())
+    Each one is a way the old typed-in box went wrong: a shortcut that fires the thing
+    you are editing, a half-finished combination stored as if it were whole, two
+    commands quietly sharing one combination, and no way out of the box except to type
+    something valid.
+    """
 
-    def test_a_valid_hotkey_is_accepted_and_canonicalised(self) -> None:
-        self.panel.hotkey_edit.setText("  ctrl + shift + f9 ")
-        self.panel.hotkey_edit.editingFinished.emit()
+    def _press(self, field, key, modifiers) -> None:
+        field.arm()
+        QTest.keyClick(field, key, modifiers)
+
+    def test_a_press_is_read_and_stored_in_the_canonical_spelling(self) -> None:
+        self._press(
+            self.panel.hotkey_edit, QtCore.Qt.Key.Key_F9,
+            QtCore.Qt.KeyboardModifier.ControlModifier
+            | QtCore.Qt.KeyboardModifier.ShiftModifier,
+        )
         self.assertEqual(self.settings.hotkey, "Ctrl+Shift+F9")
         self.assertEqual(self.panel.hotkey_edit.text(), "Ctrl+Shift+F9")
         self.assertEqual(self.fired, 1)
         self.assertFalse(self.panel.hotkey_problem.isVisibleTo(self.panel))
 
-    def test_a_refusal_is_cleared_by_a_good_one(self) -> None:
-        self.panel.hotkey_edit.setText("Ctrl+")
-        self.panel.hotkey_edit.editingFinished.emit()
-        self.assertTrue(self.panel.hotkey_problem.text())
-        self.panel.hotkey_edit.setText("Ctrl+Alt+K")
-        self.panel.hotkey_edit.editingFinished.emit()
-        self.assertEqual(self.panel.hotkey_problem.text(), "")
-        self.assertEqual(self.settings.hotkey, "Ctrl+Alt+K")
+    def test_the_global_hotkeys_are_stood_down_while_it_waits(self) -> None:
+        """Without this the box could not read the shortcut it is editing: Windows
+        takes a registered combination and no window ever sees it."""
+        heard: list[bool] = []
+        self.panel.hotkey_capture.connect(heard.append)
+        self._press(
+            self.panel.hotkey_edit, QtCore.Qt.Key.Key_K,
+            QtCore.Qt.KeyboardModifier.ControlModifier
+            | QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.assertEqual(heard, [True, False])
+
+    def test_escape_leaves_the_shortcut_as_it_was(self) -> None:
+        before = self.settings.hotkey
+        field = self.panel.hotkey_edit
+        field.arm()
+        self.assertTrue(field.is_armed())
+        QTest.keyClick(field, QtCore.Qt.Key.Key_Escape)
+        self.assertFalse(field.is_armed())
+        self.assertEqual(field.text(), before)
+        self.assertEqual(self.settings.hotkey, before)
+        self.assertEqual(self.fired, 0)
+
+    def test_a_modifier_on_its_own_is_not_a_shortcut(self) -> None:
+        before = self.settings.hotkey
+        field = self.panel.hotkey_edit
+        field.arm()
+        QTest.keyClick(field, QtCore.Qt.Key.Key_Control)
+        self.assertTrue(field.is_armed(), "still waiting for the key it belongs to")
+        self.assertEqual(self.settings.hotkey, before)
+
+    def test_a_bare_key_is_not_a_shortcut_either(self) -> None:
+        """One that fires while somebody is typing is worse than none at all."""
+        before = self.settings.hotkey
+        field = self.panel.hotkey_edit
+        field.arm()
+        QTest.keyClick(field, QtCore.Qt.Key.Key_F9)
+        self.assertTrue(field.is_armed())
+        self.assertEqual(self.settings.hotkey, before)
+        self.assertEqual(self.fired, 0)
+
+    def test_a_combination_another_command_has_is_refused_in_words(self) -> None:
+        self.settings.hotkey_pause = "Ctrl+Alt+K"
+        self.panel.refresh_from_settings()
+        self.fired = 0
+        before = self.settings.hotkey
+        self._press(
+            self.panel.hotkey_edit, QtCore.Qt.Key.Key_K,
+            QtCore.Qt.KeyboardModifier.ControlModifier
+            | QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.assertEqual(self.settings.hotkey, before)
+        self.assertEqual(self.panel.hotkey_edit.text(), before)
+        self.panel.show_page("control")
+        self.assertTrue(self.panel.hotkey_problem.isVisibleTo(self.panel))
+        message = self.panel.hotkey_problem.text()
+        self.assertIn("Ctrl+Alt+K", message)
+        self.assertIn("pause", message)
+        self.assertEqual(self.fired, 0)
+
+    def test_the_other_two_boxes_write_their_own_settings(self) -> None:
+        for field, attribute, key in (
+            (self.panel.hotkey_pause_edit, "hotkey_pause", QtCore.Qt.Key.Key_F7),
+            (self.panel.hotkey_draw_edit, "hotkey_annotate", QtCore.Qt.Key.Key_F8),
+        ):
+            with self.subTest(attribute=attribute):
+                self._press(
+                    field, key, QtCore.Qt.KeyboardModifier.ControlModifier
+                    | QtCore.Qt.KeyboardModifier.AltModifier
+                )
+                expected = "Ctrl+Alt+" + QtGui.QKeySequence(key).toString()
+                self.assertEqual(getattr(self.settings, attribute), expected)
+
+    def test_hiding_the_window_disarms_a_box(self) -> None:
+        """A box left waiting would hold the global hotkeys down for ever."""
+        heard: list[bool] = []
+        self.panel.hotkey_capture.connect(heard.append)
+        self.panel.show()
+        self.panel.hotkey_edit.arm()
+        self.panel.hide()
+        self.assertFalse(self.panel.hotkey_edit.is_armed())
+        self.assertEqual(heard, [True, False])
 
 
 class TestEstimate(PanelTestCase):
     def test_it_starts_at_the_default_capture_size_and_says_it_is_an_estimate(
         self,
     ) -> None:
-        text = self.panel.estimate_label.text()
+        text = self._estimate()
         self.assertEqual(self.panel.capture_size(), settings_panel.DEFAULT_CAPTURE)
-        self.assertIn("Estimated", text)
-        self.assertIn("1920×1080", text)
+        self.assertIn("on a busy screen", text)
+        self.assertIn("1920 × 1080", text)
         self.assertIn("MB a minute", text)
 
     def test_it_changes_with_the_format(self) -> None:
@@ -455,14 +576,14 @@ class TestEstimate(PanelTestCase):
         after_quality = self.panel.estimate_label.text()
         self.assertNotEqual(start, after_quality)
 
-        self.panel.fps_spin.setValue(30)
+        self._choose(self.panel.fps_combo, 30)
         after_fps = self.panel.estimate_label.text()
         self.assertNotEqual(after_quality, after_fps)
 
         self.panel.set_capture_size(2560, 1440)
         after_size = self.panel.estimate_label.text()
         self.assertNotEqual(after_fps, after_size)
-        self.assertIn("2560×1440", after_size)
+        self.assertIn("2560 × 1440", after_size)
 
     def test_the_four_four_four_warning_is_never_truncated(self) -> None:
         self.panel.profile_combo.setCurrentIndex(
@@ -478,15 +599,13 @@ class TestEstimate(PanelTestCase):
         self.qt_app.processEvents()
         try:
             self.assertLess(note.width(), settings_panel.WIDTH)
+            # It really wraps at the width it has rather than being elided: the height
+            # it needs at that width is the height it was given, and it is more than
+            # one line.
             needed = note.heightForWidth(note.width())
             self.assertGreaterEqual(note.height(), needed)
-            # The whole note fits inside the panel, which grew to make room for it.
-            # `totalHeightForWidth` and not `sizeHint`: the hint is for the width the
-            # wrapping label wants, which is not the width it has.
-            self.assertGreaterEqual(
-                self.panel.height(),
-                self.panel.layout().totalHeightForWidth(self.panel.width()),
-            )
+            self.assertGreater(needed, note.fontMetrics().height(),
+                               "a one-line answer means it did not wrap")
         finally:
             self.panel.hide()
 
@@ -615,12 +734,12 @@ class TestTheLanguageRow(PanelTestCase):
     def test_the_text_really_changes(self) -> None:
         """Not that `retranslate` was called - that the widgets say something else."""
         before = {
-            "title": self._caption("Recording settings"),
+            "title": self._caption("Settings"),
             "quality": self._caption("Quality"),
             "format": self.panel.profile_combo.currentText(),
             "off": self.panel.mic_combo.itemText(0),
             "tracks": self.panel.tracks_note.text(),
-            "estimate": self.panel.estimate_label.text(),
+            "estimate": self._estimate(),
         }
         for value in before.values():
             self.assertTrue(value, "nothing to compare against")
@@ -629,10 +748,10 @@ class TestTheLanguageRow(PanelTestCase):
             self.panel.language_combo.findData(i18n.LANG_RU)
         )
 
-        self.assertEqual(self._caption("Recording settings"), "Настройки записи")
+        self.assertEqual(self._caption("Settings"), "Настройки")
         self.assertEqual(self._caption("Quality"), "Качество")
         self.assertEqual(self.panel.mic_combo.itemText(0), "Выкл.")
-        self.assertIn("МБ в минуту", self.panel.estimate_label.text())
+        self.assertIn("МБ в минуту", self._estimate())
         self.assertIn("Для двух дорожек", self.panel.tracks_note.text())
         self.assertNotEqual(self.panel.profile_combo.currentText(), before["format"])
 
@@ -662,14 +781,21 @@ class TestTheLanguageRow(PanelTestCase):
         self.assertEqual(self.panel.language_combo.currentData(), i18n.LANG_RU)
 
     def test_a_hotkey_complaint_is_said_again_not_swallowed(self) -> None:
-        self.panel.hotkey_edit.setText("Ctrl+")
-        self.panel.hotkey_edit.editingFinished.emit()
+        self.settings.hotkey_pause = "Ctrl+Alt+K"
+        self.panel.refresh_from_settings()
+        self.panel.hotkey_edit.arm()
+        QTest.keyClick(
+            self.panel.hotkey_edit, QtCore.Qt.Key.Key_K,
+            QtCore.Qt.KeyboardModifier.ControlModifier
+            | QtCore.Qt.KeyboardModifier.AltModifier,
+        )
         self.assertTrue(self.panel.hotkey_problem.text())
         i18n.set_language(i18n.LANG_RU)
         said = self.panel.hotkey_problem.text()
+        self.panel.show_page("control")
         self.assertTrue(self.panel.hotkey_problem.isVisibleTo(self.panel))
-        self.assertIn("не горячая клавиша", said)
-        self.assertIn("Ctrl+", said)
+        self.assertIn("уже занято", said)
+        self.assertIn("Ctrl+Alt+K", said)
 
     def test_the_note_says_what_changes_at_once(self) -> None:
         self.assertTrue(self.panel.language_note.text())
@@ -927,6 +1053,7 @@ class TestTheEstimateAsksWhatThisMachineMeasured(PanelTestCase):
         self.assertIn("123", self.panel.estimate_label.text())
         self.assertEqual(seen["profile_key"], self.settings.profile)
         self.assertEqual((seen["width"], seen["height"]), (2560, 1440))
+        self.assertEqual(seen["framerate"], self.settings.framerate)
 
     def test_it_is_asked_with_the_encoder_this_machine_would_use(self) -> None:
         seen, fake = self._patched(storage_mod.Estimate(10.0, False))
@@ -950,11 +1077,11 @@ class TestTheEstimateAsksWhatThisMachineMeasured(PanelTestCase):
         _seen, fake = self._patched(measured)
         with mock.patch.object(settings_panel.storage_mod, "size_estimate", fake):
             self.panel.set_encoders(_machine(*THIS_MACHINE))
-        text = self.panel.estimate_label.text()
+        text = self._estimate()
         self.assertIn("31", text)
-        self.assertIn("measured on this machine", text)
+        self.assertIn("Measured on this machine", text)
         self.assertIn("hevc_nvenc", text)
-        self.assertNotIn("Estimated", text)
+        self.assertNotIn("busy screen", text)
 
     def test_the_table_still_answers_until_then(self) -> None:
         """No store, no samples: the sentence is the one that says "estimated".
@@ -970,8 +1097,8 @@ class TestTheEstimateAsksWhatThisMachineMeasured(PanelTestCase):
         _seen, fake = self._patched(nothing)
         with mock.patch.object(settings_panel.storage_mod, "size_estimate", fake):
             self.panel.set_encoders(_machine(*THIS_MACHINE))
-        text = self.panel.estimate_label.text()
-        self.assertIn("Estimated", text)
+        text = self._estimate()
+        self.assertIn("98", text)
         self.assertIn("on a busy screen", text)
 
     def test_the_measured_sentence_is_said_again_in_russian(self) -> None:
@@ -984,8 +1111,8 @@ class TestTheEstimateAsksWhatThisMachineMeasured(PanelTestCase):
         with mock.patch.object(settings_panel.storage_mod, "size_estimate", fake):
             self.panel.set_encoders(_machine(*THIS_MACHINE))
             i18n.set_language(i18n.LANG_RU)
-        text = self.panel.estimate_label.text()
-        self.assertIn("измерено на этом компьютере", text)
+        text = self._estimate()
+        self.assertIn("Измерено на этой машине", text)
         self.assertIn("hevc_nvenc", text, "an ffmpeg name is not translated")
 
 
@@ -1153,3 +1280,309 @@ class TestAFormatThisMachineCannotEncode(PanelTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheSidebar(PanelTestCase):
+    """Five pages, one of them showing, and the keyboard able to reach them."""
+
+    def test_it_opens_on_recording(self) -> None:
+        self.assertEqual(self.panel.current_page(), "recording")
+        self.assertTrue(self.panel._nav[0][0].isChecked())
+
+    def test_every_page_in_PAGES_can_be_shown(self) -> None:
+        for key, _icon, _word in settings_panel.PAGES:
+            with self.subTest(page=key):
+                self.panel.show_page(key)
+                self.assertEqual(self.panel.current_page(), key)
+
+    def test_pressing_a_button_shows_its_page(self) -> None:
+        for index, (button, _word) in enumerate(self.panel._nav):
+            with self.subTest(index=index):
+                button.click()
+                self.assertEqual(
+                    self.panel.current_page(), settings_panel.PAGES[index][0]
+                )
+
+    def test_showing_a_page_checks_its_button_and_only_its_button(self) -> None:
+        self.panel.show_page("camera")
+        checked = [b.isChecked() for b, _w in self.panel._nav]
+        self.assertEqual(checked, [False, False, True, False, False])
+
+    def test_an_unknown_page_changes_nothing(self) -> None:
+        self.panel.show_page("sound")
+        self.panel.show_page("nonsense")
+        self.assertEqual(self.panel.current_page(), "sound")
+
+    def test_only_the_page_scrolls(self) -> None:
+        """The sidebar and the footer stay put; a long page is the one that moves."""
+        for index in range(self.panel.stack.count()):
+            widget = self.panel.stack.widget(index)
+            self.assertIsInstance(widget, QtWidgets.QScrollArea)
+            self.assertTrue(widget.widgetResizable())
+
+    def test_every_setting_from_the_old_column_is_still_reachable(self) -> None:
+        """The redesign moved controls; it was not allowed to lose any."""
+        controls = (
+            "preset_combo", "fps_combo", "size_combo", "profile_combo",
+            "quality_combo", "folder_edit", "browse_button",
+            "mic_combo", "system_combo", "tracks_combo",
+            "webcam_switch", "webcam_combo", "webcam_corner_combo",
+            "webcam_size_combo", "webcam_shape_combo", "webcam_res_combo",
+            "cursor_switch", "clicks_switch", "frame_switch", "bar_switch",
+            "countdown_combo", "autostop_combo", "after_combo",
+            "hotkey_edit", "hotkey_pause_edit", "hotkey_draw_edit",
+            "language_combo",
+        )
+        for name in controls:
+            with self.subTest(control=name):
+                widget = getattr(self.panel, name, None)
+                self.assertIsNotNone(widget, f"{name} is gone")
+                # And it is on one of the pages, not left parentless in the air.
+                self.assertIsNotNone(widget.parent())
+
+
+class TheCameraPage(PanelTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.panel.show_page("camera")
+
+    def test_the_dependent_settings_are_hidden_while_the_camera_is_off(self) -> None:
+        self.settings.webcam_enabled = False
+        self.panel.refresh_from_settings()
+        self.assertFalse(self.panel.webcam_body.isVisibleTo(self.panel))
+        self.settings.webcam_enabled = True
+        self.panel.refresh_from_settings()
+        self.assertTrue(self.panel.webcam_body.isVisibleTo(self.panel))
+
+    def test_their_values_survive_being_hidden(self) -> None:
+        self.settings.webcam_enabled = True
+        self.settings.webcam_corner = "top_left"
+        self.settings.webcam_shape = "circle"
+        self.panel.refresh_from_settings()
+        self.panel.webcam_switch.click()  # off
+        self.panel.webcam_switch.click()  # on again
+        self.assertEqual(self.settings.webcam_corner, "top_left")
+        self.assertEqual(self.settings.webcam_shape, "circle")
+        self.assertEqual(self.panel.webcam_corner_combo.currentData(), "top_left")
+
+    def test_the_diagram_follows_the_lists(self) -> None:
+        self.settings.webcam_enabled = True
+        self.panel.refresh_from_settings()
+        self._choose(self.panel.webcam_corner_combo, "top_right")
+        self._choose(self.panel.webcam_shape_combo, "circle")
+        self._choose(self.panel.webcam_size_combo, "large")
+        self.assertEqual(
+            self.panel.camera_view.placement(), ("top_right", "large", "circle")
+        )
+
+    def test_clicking_the_diagram_writes_the_setting(self) -> None:
+        self.settings.webcam_enabled = True
+        self.panel.refresh_from_settings()
+        self.fired = 0
+        self.panel.camera_view.cornerPicked.emit("top_left")
+        self.assertEqual(self.settings.webcam_corner, "top_left")
+        self.assertEqual(self.panel.webcam_corner_combo.currentData(), "top_left")
+        self.assertEqual(self.fired, 1)
+
+
+class WhileATakeIsRunning(PanelTestCase):
+    """Everything about the picture and the sound was read when the take started.
+
+    Leaving those controls live would let somebody change the frame rate mid-take and
+    wonder why nothing happened, so they are disabled and the footer says why.
+    """
+
+    def test_the_footer_says_something_different(self) -> None:
+        before = self.panel.status_label.text()
+        self.panel.set_recording(True)
+        after = self.panel.status_label.text()
+        self.assertNotEqual(before, after)
+        self.assertIn("next one", after)
+        self.panel.set_recording(False)
+        self.assertEqual(self.panel.status_label.text(), before)
+
+    def test_the_picture_and_sound_controls_are_locked(self) -> None:
+        self.panel.set_recording(True)
+        for name in ("fps_combo", "size_combo", "profile_combo", "quality_combo",
+                     "preset_combo", "webcam_switch", "mic_switch", "system_switch",
+                     "countdown_combo"):
+            with self.subTest(control=name):
+                self.assertFalse(getattr(self.panel, name).isEnabled())
+
+    def test_what_really_does_apply_at_once_stays_live(self) -> None:
+        """The language, the shortcuts, the bar and the folder are not read at the
+        start of a take, so locking them would be a lie about why."""
+        self.panel.set_recording(True)
+        for name in ("language_combo", "hotkey_edit", "hotkey_pause_edit",
+                     "hotkey_draw_edit", "bar_switch", "browse_button",
+                     "folder_edit", "after_combo", "autostop_combo"):
+            with self.subTest(control=name):
+                self.assertTrue(getattr(self.panel, name).isEnabled())
+
+    def test_it_all_comes_back(self) -> None:
+        self.panel.set_recording(True)
+        self.panel.set_recording(False)
+        self.assertTrue(self.panel.fps_combo.isEnabled())
+        self.assertTrue(self.panel.profile_combo.isEnabled())
+
+    def test_saying_it_twice_changes_nothing(self) -> None:
+        self.panel.set_recording(True)
+        self.assertTrue(self.panel.recording())
+        self.panel.set_recording(True)
+        self.assertTrue(self.panel.recording())
+
+
+class EverythingOnItCanBeSaidInRussian(PanelTestCase):
+    """`check_translations.py` cannot see these.
+
+    Every caption on this window reaches `_()` through a variable - `_(title)`,
+    `_(word)`, `_(info)` - which the static scan reports as "not checkable". So the
+    window is asked directly instead: it knows every English source it registered.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.addCleanup(i18n.set_language, i18n.LANG_EN)
+
+    def test_no_caption_falls_back_to_english(self) -> None:
+        i18n.set_language(i18n.LANG_RU)
+        missing = [
+            source for _widget, source, _upper in self.panel._captions
+            if source.strip() and i18n._(source) == source
+        ]
+        self.assertEqual(missing, [])
+
+    def test_no_sidebar_word_falls_back(self) -> None:
+        i18n.set_language(i18n.LANG_RU)
+        missing = [word for _b, word in self.panel._nav if i18n._(word) == word]
+        self.assertEqual(missing, [])
+
+    def test_no_explanation_falls_back(self) -> None:
+        i18n.set_language(i18n.LANG_RU)
+        missing = [
+            source for _widget, source in self.panel._tips
+            if i18n._(source) == source
+        ]
+        self.assertEqual(missing, [])
+
+    def test_the_sidebar_really_changes_language(self) -> None:
+        english = [button.text() for button, _w in self.panel._nav]
+        i18n.set_language(i18n.LANG_RU)
+        russian = [button.text() for button, _w in self.panel._nav]
+        self.assertNotEqual(english, russian)
+        self.assertEqual(russian[0], "Запись")
+
+
+class TheFolderField(PanelTestCase):
+    """A folder that cannot be written to is not a setting - it is a recording that
+    will fail once ffmpeg has already started."""
+
+    def test_a_folder_that_works_has_nothing_to_say(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as folder:
+            self.assertEqual(self.panel._folder_problem(folder), "")
+
+    def test_one_that_is_not_there_says_why(self) -> None:
+        problem = self.panel._folder_problem(str(Path("B:/") / "no-such-folder-here"))
+        self.assertTrue(problem)
+        self.assertIn("cannot be written", problem)
+
+    def test_the_probe_file_does_not_stay_behind(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as folder:
+            self.panel._folder_problem(folder)
+            self.assertEqual(list(Path(folder).iterdir()), [])
+
+    def test_a_refused_folder_leaves_the_setting_alone(self) -> None:
+        before = self.settings.output_dir
+        with mock.patch.object(
+            QtWidgets.QFileDialog, "getExistingDirectory",
+            staticmethod(lambda *a, **k: "B:/no-such-folder-here"),
+        ):
+            self.panel._browse()
+        self.assertEqual(self.settings.output_dir, before)
+        self.assertTrue(self.panel.folder_problem.isVisibleTo(self.panel))
+        self.assertEqual(self.fired, 0)
+
+    def test_a_good_one_is_taken_and_announced(self) -> None:
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as folder:
+            with mock.patch.object(
+                QtWidgets.QFileDialog, "getExistingDirectory",
+                staticmethod(lambda *a, **k: folder),
+            ):
+                self.panel._browse()
+            self.assertEqual(self.settings.output_dir, folder)
+            self.assertEqual(self.panel.folder_edit.text(), folder)
+            self.assertFalse(self.panel.folder_problem.isVisibleTo(self.panel))
+            self.assertEqual(self.fired, 1)
+
+
+class TheLinksToTheProject(PanelTestCase):
+    """Two words on the General page. The only ways they can be wrong are the address
+    behind them, the keyboard not reaching them, and silence when nothing opens."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.panel.show_page("general")
+
+    def test_they_point_at_the_project(self) -> None:
+        self.assertEqual(self.panel.page_button.toolTip(), settings_panel.PROJECT_PAGE)
+        self.assertEqual(
+            self.panel.source_button.toolTip(), settings_panel.PROJECT_SOURCE
+        )
+        self.assertTrue(settings_panel.PROJECT_PAGE.startswith("https://"))
+        self.assertTrue(settings_panel.PROJECT_SOURCE.startswith("https://"))
+
+    def test_pressing_one_hands_the_address_to_windows(self) -> None:
+        opened: list[str] = []
+        with mock.patch.object(
+            QtGui.QDesktopServices, "openUrl",
+            staticmethod(lambda url: opened.append(url.toString()) or True),
+        ):
+            self.panel.page_button.click()
+            self.panel.source_button.click()
+        self.assertEqual(
+            opened, [settings_panel.PROJECT_PAGE, settings_panel.PROJECT_SOURCE]
+        )
+        self.assertFalse(self.panel.link_problem.isVisibleTo(self.panel))
+
+    def test_a_link_that_does_not_open_says_so(self) -> None:
+        """Silence after a click is the one outcome a link may not have."""
+        with mock.patch.object(
+            QtGui.QDesktopServices, "openUrl", staticmethod(lambda _url: False)
+        ):
+            self.panel.page_button.click()
+        self.assertTrue(self.panel.link_problem.isVisibleTo(self.panel))
+        self.assertIn(settings_panel.PROJECT_PAGE, self.panel.link_problem.text())
+
+    def test_opening_one_changes_no_setting(self) -> None:
+        with mock.patch.object(
+            QtGui.QDesktopServices, "openUrl", staticmethod(lambda _url: True)
+        ):
+            self.panel.page_button.click()
+        self.assertEqual(self.fired, 0)
+
+    def test_the_keyboard_reaches_them(self) -> None:
+        for button in (self.panel.page_button, self.panel.source_button):
+            with self.subTest(button=button.text()):
+                self.assertNotEqual(
+                    button.focusPolicy(), QtCore.Qt.FocusPolicy.NoFocus
+                )
+
+    def test_the_words_follow_the_language(self) -> None:
+        self.addCleanup(i18n.set_language, i18n.LANG_EN)
+        i18n.set_language(i18n.LANG_RU)
+        self.assertEqual(self.panel.page_button.text(), "Страница программы")
+        self.assertEqual(self.panel.source_button.text(), "Исходный код")
+        # The address itself is not translated.
+        self.assertEqual(self.panel.page_button.toolTip(), settings_panel.PROJECT_PAGE)
+
+    def test_the_version_is_the_one_the_package_reports(self) -> None:
+        from screenrec import __version__
+
+        self.assertIn(__version__, self.panel.version_label.text())
+

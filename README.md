@@ -19,7 +19,7 @@ the frame rate it is really achieving:
 
 ## Installing
 
-Download `ScreenRec-0.1.0-setup.exe` from [Releases](../../releases) and run it. It
+Download `ScreenRec-0.2.0-setup.exe` from [Releases](../../releases) and run it. It
 installs both programs into `C:\Program Files\ScreenRec`, puts **ScreenRec** and
 **ScreenRec Player** in the Start menu, and asks once where recordings should go.
 Nothing else is needed: ffmpeg is inside.
@@ -46,7 +46,8 @@ is bundled under `tools\ffmpeg`.
 | Source | whole monitor, a region you drag out, or one window |
 | Audio | microphone (DirectShow) and/or system sound (WASAPI loopback), mixed or as two tracks |
 | Cursor | drawn or not; clicks optionally get a fading ring |
-| Camera | optional, in a corner of the recording: four corners, three sizes, rounded rectangle / circle / rectangle, and the camera's own capture resolution chosen for the window or picked by hand - drawn on the desktop, so it costs the capture pipeline nothing |
+| Camera | optional, in a corner of the recording: four corners, four sizes, rounded rectangle / circle / rectangle, and the camera's own capture resolution chosen for the window or picked by hand - drawn on the desktop, so it costs the capture pipeline nothing, and it can be switched off **in the middle of a take** when it covers something |
+| Settings | behind the gear: five pages, a diagram of where the camera sits, and shortcut boxes that read the keys you press |
 | Size | the screen's own, or scaled down to 1440p, 1080p or 720p; never scaled up |
 | Encoder | four measured profiles: H.265, H.265 4:4:4 for sharp text, H.264, x264 |
 | Output | MP4 in `%USERPROFILE%\Videos\ScreenRec`, named by a strftime pattern |

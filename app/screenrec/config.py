@@ -237,7 +237,14 @@ MAX_HEIGHTS: tuple[int, ...] = (0, 1440, 1080, 720)
 WEBCAM_CORNERS: tuple[str, ...] = (
     "top_left", "top_right", "bottom_left", "bottom_right",
 )
-WEBCAM_SIZES: tuple[str, ...] = ("small", "medium", "large")
+WEBCAM_SIZES: tuple[str, ...] = ("tiny", "small", "medium", "large")
+#: How wide the camera is as a fraction of the recorded area, spelled again here for the
+#: same reason as the names above: the settings window draws a diagram of the placement
+#: and must not pull QtMultimedia in to find out how big "medium" is. `webcam` owns the
+#: real values and `tests/test_webcam.py` fails if these two ever disagree.
+WEBCAM_SIZE_FRACTIONS: dict[str, float] = {
+    "tiny": 0.08, "small": 0.12, "medium": 0.17, "large": 0.24,
+}
 WEBCAM_SHAPES: tuple[str, ...] = ("rounded", "circle", "rectangle")
 DEFAULT_WEBCAM_SHAPE = "rounded"
 DEFAULT_WEBCAM_CORNER = "bottom_right"

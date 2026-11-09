@@ -23,10 +23,12 @@ the checkout root\
     overlay.py    TODO   region selector + click highlight
     webcam.py     DONE   the camera in a corner, drawn on the desktop so the
                          capture picks it up - see its own docstring for why.
-                         Corner, size, outline (rounded / circle / rectangle)
-                         and the camera's own capture mode; the automatic mode
-                         weighs frame rate before size, because this camera's
-                         two largest modes run at 2 fps
+                         Corner, four sizes, outline (rounded / circle /
+                         rectangle) and the camera's own capture mode; the
+                         automatic mode weighs frame rate before size, because
+                         this camera's two largest modes run at 2 fps. Being a
+                         window is also why it alone can be switched off in the
+                         middle of a take
     ui/theme.py   TODO
     ui/main_window.py  TODO (assembled last)
   tests\

@@ -15,7 +15,7 @@ document's job is to be honest about the difference rather than to look finished
 | Runs | `ScreenRec.cmd` (or `ScreenRec-console.cmd` to see tracebacks) |
 | Python | 3.13.5 in the project's `.venv`, PySide6 6.12, pyaudiowpatch 0.2.12.9, comtypes |
 | ffmpeg | bundled, `tools\ffmpeg` — BtbN gpl, N-128352-gec887b13a8-20261103 |
-| Tests | 1961, counted 2026-11-05, `PYTHONPATH=app python -m unittest discover -s tests -q` — all pass, 2 skipped (they want the bundled ffmpeg/ffprobe) |
+| Tests | 2105, counted 2026-11-09, `PYTHONPATH=app python -m unittest discover -s tests -q` — all pass, 2 skipped (they want the bundled ffmpeg/ffprobe) |
 | Static sweep | `python tools\static_review.py` — clean |
 | Translations | `python tools\check_translations.py` — every translatable string has Russian |
 | Languages | English and Russian, switched in Settings, live |
@@ -371,7 +371,10 @@ are **deleted**.
   discard and the folder.
 * **Popovers**, not dialogs: the source picker (a card grid with live thumbnails), the
   device lists, the quality list.
-* **The settings panel** behind the gear, in sections, with real toggle switches.
+* **The settings window** behind the gear: a sidebar of five pages - Recording,
+  Sound, Camera, Control, General - with real toggle switches, a drawn diagram of where
+  the camera sits, and shortcut boxes that read a key press rather than being typed
+  into. Rebuilt on 2026-11-08 from the single 1375 px column it had been.
 * `ui/theme.py` is a new palette: violet is *selection*, green is *live*, red is
   *recording*, and nothing else is ever red. Contrast is tested.
 

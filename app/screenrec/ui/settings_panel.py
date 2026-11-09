@@ -1,29 +1,46 @@
-"""The settings panel: everything you change once a month, behind the gear.
+"""The settings window: a sidebar, five pages, and one place that writes the settings.
 
-The bar carries the decisions a recording needs *now* - what to capture, which devices
-are live, record. Everything else lives here, on one floating surface 360 px wide, in
-labelled sections. It is a panel and not a window: nothing modal, nothing that takes
-focus, nothing that needs a window manager.
+It was one column 1375 px tall until 2026-11-08, which was taller than the screen it
+had to open on and could not be photographed to show anybody. The settings themselves
+did not change; the way they are reached did.
 
-Two rules shape the layout:
+**The shape.** A title band, a sidebar of five pages, the chosen page, and a footer that
+says what happens to a change and carries the one button that closes the window. The
+sidebar and the footer never move. Only the page scrolls, and it scrolls rather than
+being squeezed: at 150% and 200% Windows scaling a scroll bar is honest and a clipped
+control is not.
 
-* **The control column is a fixed width.** A row is a label on the left and a control on
-  the right, and the control column never changes size, so choosing "Sharp text - H.265
-  4:4:4" after "No GPU - x264" does not make the whole panel jump.
-* **The title row is the handle.** A frameless window has no title bar, so pressing
-  "Recording settings" and dragging moves the panel - `surfaces.SurfaceDrag`, the same
-  press / 2 px slop / snap-to-edge / clamp the bar is moved by. The close button in
-  that row still closes. Where it was dropped is remembered **for the session**, and
-  `popup_near` reopens it there instead of under the gear: the panel is read and
-  edited, so putting it somewhere is a decision, and `config.Settings` is finished and
-  not this module's to extend with a field for it.
-* **Nothing is truncated that the user needs to read.** The chosen profile's ``note`` is
-  where the 4:4:4 "Windows' own player does not decode this" warning lives, so it word
-  wraps and the panel grows to fit it rather than eliding it away.
+**What is on which page** follows what somebody is looking for, not what the code does:
+
+* *Recording* - the profile, the four video settings, what a minute costs, where files go;
+* *Sound* - the microphone, the system sound, and whether they share one track;
+* *Camera* - the corner picture, with a diagram of where it will sit;
+* *Control* - what is on screen while you record, the timers, and the three shortcuts;
+* *General* - the language.
+
+Three rules shape the layout:
+
+* **A field is a caption above a control**, and two of them sit side by side. The grid
+  drops to one column below `settings_widgets.FieldGrid.NARROW`, because a German or
+  Russian caption in half of 600 px is not the same width as an English one.
+* **The control column no longer has a fixed width.** It had one when the window was a
+  360 px popover and a wide combo box would have moved the layout; in a two-column grid
+  each control simply fills its cell, and a long value elides inside it.
+* **Nothing is truncated that the user needs to read.** The profile's ``note`` - where
+  the 4:4:4 "Windows' own player does not decode this" warning lives - word wraps across
+  the full width of the page.
+
+**The title row is the handle.** A frameless window has no title bar, so pressing the
+title and dragging moves the window - `surfaces.SurfaceDrag`, the same press / 2 px slop
+/ snap-to-edge / clamp the bar is moved by. Where it was dropped is remembered **for the
+session**, and `popup_near` reopens it there instead of under the gear.
 
 The panel writes straight into the `config.Settings` object it was handed and emits
 `changed`. **It never saves the file** - the application owns that, and one writer for
 one file is the only way the atomic write in `config.save_settings` stays meaningful.
+Everything is applied as it is touched; the footer says so, and says something different
+while a recording is running, because then the video and audio settings are describing
+the *next* take and the controls for them are disabled.
 
 **What the two device combo boxes show is what the next recording will use.** The
 settings do not always pin a device down - the bar's microphone toggle sets
@@ -39,12 +56,19 @@ empty list nobody has filled in is not evidence that the machine has no micropho
 **This one surface takes focus, and that is deliberate.** The house rule in
 `docs/UI_CONTRACT.md` - nothing activates, because clicking Record must not pull the user
 out of what they were about to demonstrate - is written for the bar and the popovers,
-which are all mouse. The panel is the only surface with a hotkey box and two spin boxes,
-and a window carrying `WS_EX_NOACTIVATE` is never activated by a click, so every
-keystroke would go to the application behind it. So the panel opts out of
-`surfaces._no_activate` (see `_styled` in `__init__`) and activates itself in
-`popup_near`, the way `overlay.RegionSelector` does. `Qt.Tool` still keeps it out of
+which are all mouse. This window is read with the keyboard: it has three shortcut boxes
+and a sidebar that answers the arrow keys, and a window carrying `WS_EX_NOACTIVATE` is
+never activated by a click, so every keystroke would go to the application behind it. So
+it opts out of `surfaces._no_activate` (see `_styled` in `__init__`) and activates itself
+in `popup_near`, the way `overlay.RegionSelector` does. `Qt.Tool` still keeps it out of
 Alt+Tab; only the no-activate bit is given up.
+
+**Editing a shortcut stands the global hotkeys down.** `settings_widgets.HotkeyEdit`
+reads a real key press, and a combination registered through `RegisterHotKey` never
+reaches any window - Windows takes it. Without suspending them, editing the
+start/stop shortcut would start a recording and the box would read nothing at all. The
+panel passes `hotkey_capture` up to the application, which stops the listeners while a
+box is armed and starts them again when it is finished.
 
 **The panel says which encoding path is in force, and only once it has been told.**
 `set_encoders` hands it `capabilities.probe`'s rows; until then the line under the
@@ -60,18 +84,19 @@ The capture-frame switch reaches the settings object through ``CAPTURE_FRAME_ATT
 rather than naming the field: the switch is older than the field, and going through
 `getattr` keeps the panel working against a `Settings` object that has not got it.
 
-**The language row changes the language of the whole program, not of this panel.** It
+**The language row changes the language of the whole program, not of this window.** It
 calls `i18n.set_language`, which tells every window through `i18n.notifier`; this panel
 listens to that notifier like any other window and rebuilds its own text in
-`retranslate`, so a switch made with the panel open changes the panel under the pointer.
-Every string on it therefore has to be re-readable: nothing translated may be built once
-and forgotten, which is why `_build` registers its captions and the combo boxes are
-filled from the `_*_items` methods that `retranslate` calls again. The row writes
-`config.Settings.language` and emits `changed` like every other control - the
+`retranslate`, so a switch made with the window open changes the window under the
+pointer. Every string on it therefore has to be re-readable: nothing translated may be
+built once and forgotten, which is why `_build` registers its captions and the combo
+boxes are filled from the `_*_items` methods that `retranslate` calls again. The row
+writes `config.Settings.language` and emits `changed` like every other control - the
 application still owns the file, for the reason above.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Sequence
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -89,27 +114,60 @@ from .. import winapi
 from ..i18n import _
 from . import bar as bar_geometry
 from . import surfaces, theme
+from .settings_widgets import (
+    CameraDiagram,
+    FieldGrid,
+    HotkeyEdit,
+    InfoButton,
+    NavButton,
+    Switch,
+    caption,
+    hairline,
+)
 
-#: The panel's width. The bar is small; a panel wider than this stops reading as a
-#: popover and starts reading as a window.
-WIDTH = 360
+#: The window. 820x680 was the size the layout was drawn for, and 680 was 40 px short:
+#: measured on 2026-11-08 with the longest translation of each page, Recording wants 580
+#: and Camera 578 of the 562 a 680 px window leaves them. At 720 both fit and only
+#: Control still scrolls - it wants 672, and the 110 px to fit that would have to come
+#: out of the spacing between four switches and three shortcut boxes, which is worse
+#: than a short scroll. The height is cut down again in `popup_near` on a screen that
+#: cannot hold it.
+WIDTH = 820
+HEIGHT = 720
 
-#: Every row's control is exactly this wide, so a value changing cannot move the layout.
-#: Measured, not guessed: with `theme.style_sheet()` applied, a combo box holding all four
-#: `config.PROFILES` labels asks for 199 px, so at 200 the format picker shows its longest
-#: label ("Most compatible - H.264") whole. That leaves 120 px for the row label, and the
-#: widest of those ("Show the cursor") is 94 px.
-CONTROL_WIDTH = 200
+#: The sidebar. Wide enough for "Управление" at 150% scaling, which is the longest of
+#: the five words in either language.
+NAV_WIDTH = 176
 
 #: What the estimate assumes before the application tells us the real capture size.
 DEFAULT_CAPTURE = (1920, 1080)
 
-#: The capture-frame setting has no field in `config.Settings`; see the module docstring.
+#: The capture-frame setting reaches `Settings` through this name; see the module
+#: docstring.
 CAPTURE_FRAME_ATTR = "capture_frame"
 CAPTURE_FRAME_DEFAULT = True
 
 #: Sentinel used in the device combo boxes for "do not record this source at all".
 _OFF = "__off__"
+
+#: The pages, in sidebar order: the key, the icon, and the English word.
+PAGES: tuple[tuple[str, str, str], ...] = (
+    ("recording", "record", "Recording"),
+    ("sound", "speaker", "Sound"),
+    ("camera", "camera", "Camera"),
+    ("control", "keyboard", "Control"),
+    ("general", "settings", "General"),
+)
+
+#: Frame rates offered by name. A rate that is in the settings and not on this list is
+#: added to it when the window opens, so a value set by hand in the JSON survives being
+#: looked at - the list is a convenience, not a new limit.
+FRAME_RATES: tuple[int, ...] = (24, 30, 48, 60, 90, 120, 144)
+
+#: Countdowns and automatic stops, in the units they are stored in. Both used to be spin
+#: boxes, which asked somebody to find "Never" by holding an arrow key down to zero.
+COUNTDOWNS: tuple[int, ...] = (0, 3, 5, 10)
+AUTO_STOPS: tuple[int, ...] = (0, 5, 10, 15, 30, 45, 60, 90, 120)
 
 #: How a codec is written for a reader. `capabilities` keeps the same table privately;
 #: this one is the panel's, because the panel shows the codec and never the encoder name
@@ -144,168 +202,64 @@ CODEC_LABELS: dict[str, str] = {"hevc": "H.265", "h264": "H.264", "av1": "AV1"}
 # because that figure is content, resolution and machine - but the reason is now the
 # spread of four real runs, not a number nobody can reach.
 
-#: How tall the probe table may grow before it scrolls instead.
-#:
-#: Re-measured on 2026-11-05, because the figures written here on 2026-11-04 did not
-#: reproduce. Offscreen platform, default fonts, a default `config.Settings` - so the
-#: standard profile, no 4:4:4 warning - and this machine's own twelve probe rows:
-#:
-#:     never told about any encoder            1117 px
-#:     told, expander closed                   1215 px
-#:     expander open at DETAILS_HEIGHT = 150   1367 px
-#:     expander open with the cap lifted       1505 px
-#:
-#: Only the 1215 px reproduced; 1409 and 1746 did not, and the second of them overstated
-#: the case by 241 px. The case survives anyway: 1505 px is taller than the 1440 px
-#: screen it was measured for, the last rows cannot be read at all, and `popup_near` can
-#: only keep the top of the panel on screen. At 150 px about five rows are visible.
+#: How tall the probe table may grow before it scrolls instead. Twelve candidates, most
+#: of them with a wrapped sentence of ffmpeg's underneath, is more than one page should
+#: grow by. At 150 px about five rows are visible.
 DETAILS_HEIGHT = 150
 
+#: The project's own two addresses. Here rather than in `config`, because they are
+#: not settings - nobody edits them and nothing reads them back.
+PROJECT_PAGE = "https://garneva13.github.io/screenrec-win/"
+PROJECT_SOURCE = "https://github.com/garneva13/screenrec-win"
 
-class Switch(QtWidgets.QAbstractButton):
-    """A real toggle switch: a painted pill with a knob that travels across it.
-
-    A check box says "this is a form". A switch says "this is on or off right now", which
-    is what every one of these settings is. It is a `QAbstractButton` with
-    ``setCheckable(True)``, so `toggled` arrives for free and the keyboard works the way
-    Qt users expect - Space toggles it, Tab reaches it.
-
-    The travel is animated over `DURATION_MS` by one `QVariantAnimation` held on the
-    instance. Holding it matters: an animation that is only referenced by the call that
-    started it is collected mid-flight and the knob stops halfway.
-    """
-
-    WIDTH = 38
-    HEIGHT = 22
-    KNOB = 16
-    DURATION_MS = 120
-
-    def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setCheckable(True)
-        self.setFixedSize(self.WIDTH, self.HEIGHT)
-        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
-        self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
-
-        #: 0.0 = knob fully left (off), 1.0 = knob fully right (on).
-        self._travel = 1.0 if self.isChecked() else 0.0
-        self._animation = QtCore.QVariantAnimation(self)
-        self._animation.setDuration(self.DURATION_MS)
-        self._animation.setEasingCurve(QtCore.QEasingCurve.Type.InOutCubic)
-        self._animation.valueChanged.connect(self._on_travel)
-        self.toggled.connect(self._on_toggled)
-
-    # ------------------------------------------------------------- animation
-
-    def _on_toggled(self, checked: bool) -> None:
-        self._animation.stop()
-        self._animation.setStartValue(float(self._travel))
-        self._animation.setEndValue(1.0 if checked else 0.0)
-        self._animation.start()
-
-    def _on_travel(self, value: object) -> None:
-        try:
-            self._travel = max(0.0, min(1.0, float(value)))  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            # QVariantAnimation interpolates floats here; anything else is a programming
-            # error, and snapping to the settled state beats painting a broken knob.
-            self._travel = 1.0 if self.isChecked() else 0.0
-        self.update()
-
-    def set_checked_now(self, checked: bool) -> None:
-        """Set the state with no animation - for loading settings into the panel."""
-        self._animation.stop()
-        was_blocked = self.blockSignals(True)
-        try:
-            self.setChecked(checked)
-        finally:
-            self.blockSignals(was_blocked)
-        self._travel = 1.0 if checked else 0.0
-        self.update()
-
-    def travel(self) -> float:
-        """Where the knob is, 0..1. Exposed so a test can watch the animation."""
-        return self._travel
-
-    # ---------------------------------------------------------------- paint
-
-    def sizeHint(self) -> QtCore.QSize:
-        return QtCore.QSize(self.WIDTH, self.HEIGHT)
-
-    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
-        painter = QtGui.QPainter(self)
-        try:
-            self._paint(painter)
-        finally:
-            painter.end()
-
-    def _paint(self, painter: QtGui.QPainter) -> None:
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        colours = theme.COLOURS
-        enabled = self.isEnabled()
-        hovered = self.underMouse() and enabled
-        radius = self.height() / 2.0
-        track = QtCore.QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
-
-        if not enabled:
-            # Dim: the track keeps its shape so the state is still readable, but neither
-            # the accent nor the hairline is at full strength.
-            fill = colours["line"] if self.isChecked() else colours["panel"]
-            edge = colours["line"]
-            knob_ink = colours["disabled"]
-        elif self.isChecked():
-            fill = colours["accent_hover"] if hovered else colours["accent"]
-            edge = fill
-            knob_ink = colours["text"]
-        else:
-            fill = colours["hover"] if hovered else colours["line"]
-            edge = colours["line_strong"] if hovered else colours["line"]
-            knob_ink = colours["text_soft"]
-
-        painter.setPen(QtGui.QPen(QtGui.QColor(edge), 1))
-        painter.setBrush(QtGui.QColor(fill))
-        painter.drawRoundedRect(track, radius, radius)
-
-        margin = (self.height() - self.KNOB) / 2.0
-        span = self.width() - self.KNOB - 2 * margin
-        centre = QtCore.QPointF(
-            margin + self.KNOB / 2.0 + span * self._travel, self.height() / 2.0
-        )
-        painter.setPen(QtCore.Qt.PenStyle.NoPen)
-        painter.setBrush(QtGui.QColor(knob_ink))
-        painter.drawEllipse(centre, self.KNOB / 2.0, self.KNOB / 2.0)
-
-        if self.hasFocus() and enabled:
-            painter.setPen(QtGui.QPen(QtGui.QColor(colours["accent_light"]), 1))
-            painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(
-                track.adjusted(-1.5, -1.5, 1.5, 1.5), radius + 1.5, radius + 1.5
-            )
-
-    def enterEvent(self, event: QtCore.QEvent) -> None:
-        self.update()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event: QtCore.QEvent) -> None:
-        self.update()
-        super().leaveEvent(event)
-
-
-def _heading(text: str) -> QtWidgets.QLabel:
-    """A section heading: small, wide-tracked, upper case, in `text_dim`."""
-    widget = surfaces.label(text.upper(), "text_dim", 8.0)
-    font = QtGui.QFont(widget.font())
-    font.setLetterSpacing(QtGui.QFont.SpacingType.AbsoluteSpacing, 0.9)
-    font.setBold(True)
-    widget.setFont(font)
-    return widget
+#: Only these are styled from here. Everything else comes from `theme.style_sheet`; this
+#: is the window's own geometry - taller fields than the bar's popovers use, and the
+#: armed state of a shortcut box, which no other window has.
+_LOCAL_STYLE = """
+#settingsPanel QComboBox, #settingsPanel QLineEdit {
+    min-height: 22px;
+    border-radius: 8px;
+}
+#settingsPanel QLineEdit[armed="true"] {
+    border: 1px solid %(accent)s;
+    background-color: %(hover)s;
+}
+#settingsPanel QPushButton#primary {
+    background-color: %(accent)s;
+    color: %(accent_text)s;
+    border: 1px solid %(accent)s;
+    border-radius: 8px;
+    padding: 7px 26px;
+    font-weight: 600;
+}
+#settingsPanel QPushButton#primary:hover { background-color: %(accent_hover)s; }
+#settingsPanel QPushButton#primary:pressed { background-color: %(accent_press)s; }
+#settingsPanel QPushButton#primary:focus { border: 1px solid %(text)s; }
+#settingsPanel QPushButton#link {
+    background: transparent;
+    border: none;
+    padding: 2px 0;
+    text-align: left;
+    color: %(accent_light)s;
+}
+#settingsPanel QPushButton#link:hover { color: %(text)s; }
+#settingsPanel QPushButton#link:focus { text-decoration: underline; }
+#settingsPanel QWidget#navPane { background-color: %(panel)s; }
+"""
 
 
 class SettingsPanel(surfaces.FloatingSurface):
-    """The gear's panel. Writes into the `Settings` it was given; the caller saves."""
+    """The gear's window. Writes into the `Settings` it was given; the caller saves."""
 
     changed = QtCore.Signal()
     closed = QtCore.Signal()
+    #: True while a shortcut box is waiting for a key: the application must stand the
+    #: global hotkeys down, or Windows eats the press. See the module docstring.
+    hotkey_capture = QtCore.Signal(bool)
+
+    # This window is hidden from capture only while a take is running, like every
+    # other surface - `surfaces.set_recording`. It was a special case of its own until
+    # the bar turned out to have the same problem; the rule belongs in one place.
 
     def __init__(
         self,
@@ -317,6 +271,7 @@ class SettingsPanel(surfaces.FloatingSurface):
         #: already true. Setting it here is how this one surface keeps the keyboard:
         #: see the module docstring. The flag is not re-read anywhere else.
         self._styled = True
+        self.setObjectName("settingsPanel")
         self.settings = settings
         self.mics: list[audio_mod.MicDevice] = []
         self.loopbacks: list[audio_mod.LoopbackDevice] = []
@@ -333,124 +288,319 @@ class SettingsPanel(surfaces.FloatingSurface):
         #: True while settings are being pushed into the widgets, so the handlers that
         #: write back do nothing and `changed` does not fire for a value nobody changed.
         self._loading = False
-        #: Dragging the title row moves the panel; see `mousePressEvent`.
+        #: Whether a take is running. The video and audio settings then describe the
+        #: *next* one, so they are disabled and the footer says why.
+        self._recording = False
+        #: Dragging the title row moves the window; see `mousePressEvent`.
         self._drag = surfaces.SurfaceDrag(self)
         #: Where the user last dropped it, in desktop pixels, or None if never dragged.
-        #: The panel is not a popover - it is read and edited, and it is opened from a
-        #: bar the user may deliberately have put it clear of - so once it has been
-        #: moved by hand, `popup_near` stops second-guessing that and reopens it where
-        #: it was left. For the session only: it is where a window is, not a setting,
-        #: and `config.Settings` holds no window geometry at all.
+        #: For the session only: it is where a window is, not a setting, and
+        #: `config.Settings` holds no window geometry at all.
         self._dropped_at: tuple[int, int] | None = None
-        #: Every caption on the panel, as (widget, its English source, upper-case it),
+        #: Every caption on the window, as (widget, its English source, upper-case it),
         #: so `retranslate` can say the same thing again in the other language.
         self._captions: list[tuple[QtWidgets.QLabel, str, bool]] = []
+        #: The nav buttons, as (button, its English source).
+        self._nav: list[tuple[NavButton, str]] = []
+        #: Everything with a tool tip that a translation has to reach, as
+        #: (widget, its English source).
+        self._tips: list[tuple[QtWidgets.QWidget, str]] = []
         #: The hotkey complaint being shown, as (English template, its values), or None.
         #: Kept rather than just painted so that a language switch can say it again
         #: instead of swallowing a message the user has not read yet.
         self._hotkey_message: tuple[str, dict[str, str]] | None = None
 
-        self.setFixedWidth(WIDTH)
+        self.setStyleSheet(_LOCAL_STYLE % theme.COLOURS)
+        # Not a fixed size: `popup_near` cuts it down to a screen that cannot hold
+        # it, and the two-column grids fall back to one column when that happens.
+        self.setMinimumSize(520, 360)
+        self.resize(WIDTH, HEIGHT)
         self._build()
         self._wire()
         # One path fills the notes, the tool tips and the lists, at start-up and at
         # every switch, so there is no second copy of any string to fall behind.
         self.retranslate()
         self.refresh_from_settings()
+        self.show_page("recording")
         i18n.notifier.changed.connect(self._on_language_switched)
 
     # ---------------------------------------------------------------- build
 
     def _build(self) -> None:
         outer = QtWidgets.QVBoxLayout(self)
-        outer.setContentsMargins(16, 12, 16, 14)
-        outer.setSpacing(2)
+        # One pixel all round, so the surface's own hairline border is not painted over.
+        outer.setContentsMargins(1, 1, 1, 1)
+        outer.setSpacing(0)
 
         outer.addWidget(self._build_header())
-        outer.addSpacing(6)
+        outer.addWidget(hairline())
 
-        outer.addWidget(self._section("Language"))
-        self.language_combo = QtWidgets.QComboBox()
-        self.language_combo.setFixedWidth(CONTROL_WIDTH)
-        self._fill(self.language_combo, self._language_items())
-        outer.addWidget(self._row("Language", self.language_combo))
-        self.language_note = self._note("")
-        outer.addWidget(self.language_note)
-        outer.addSpacing(10)
+        body = QtWidgets.QWidget()
+        body.setObjectName("formRow")
+        body_layout = QtWidgets.QHBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+        body_layout.addWidget(self._build_nav())
+        divider = QtWidgets.QFrame()
+        divider.setFixedWidth(1)
+        divider.setStyleSheet(f"background: {theme.COLOURS['line']};")
+        body_layout.addWidget(divider)
+        self.stack = QtWidgets.QStackedWidget()
+        body_layout.addWidget(self.stack, 1)
+        outer.addWidget(body, 1)
 
-        outer.addWidget(self._section("Preset"))
-        self.preset_combo = QtWidgets.QComboBox()
-        self.preset_combo.setFixedWidth(CONTROL_WIDTH)
+        outer.addWidget(hairline())
+        outer.addWidget(self._build_footer())
+
+        for key, _icon, _word in PAGES:
+            self.stack.addWidget(self._scrolled(getattr(self, f"_page_{key}")()))
+
+    def _build_header(self) -> QtWidgets.QWidget:
+        """The title row, as a widget rather than a bare layout.
+
+        It is a widget because the window is dragged by it and `_in_header` needs a
+        rectangle to measure; `formRow` keeps it transparent.
+        """
+        holder = QtWidgets.QWidget()
+        holder.setObjectName("formRow")
+        header = QtWidgets.QHBoxLayout(holder)
+        header.setContentsMargins(20, 14, 14, 14)
+        header.setSpacing(6)
+        title = surfaces.label(_("Settings"), "text", 12.0)
+        font = QtGui.QFont(title.font())
+        font.setWeight(QtGui.QFont.Weight.DemiBold)
+        title.setFont(font)
+        self._captions.append((title, "Settings", False))
+        header.addWidget(title)
+        header.addStretch(1)
+        self.close_button = surfaces.IconButton("close", _("Close"), size=28)
+        header.addWidget(self.close_button)
+        self.header = holder
+        return holder
+
+    def _build_nav(self) -> QtWidgets.QWidget:
+        pane = QtWidgets.QWidget()
+        pane.setObjectName("navPane")
+        pane.setFixedWidth(NAV_WIDTH)
+        layout = QtWidgets.QVBoxLayout(pane)
+        layout.setContentsMargins(10, 14, 10, 14)
+        layout.setSpacing(4)
+        for _key, icon, word in PAGES:
+            button = NavButton(icon, _(word))
+            self._nav.append((button, word))
+            layout.addWidget(button)
+        layout.addStretch(1)
+        return pane
+
+    def _build_footer(self) -> QtWidgets.QWidget:
+        holder = QtWidgets.QWidget()
+        holder.setObjectName("formRow")
+        layout = QtWidgets.QHBoxLayout(holder)
+        layout.setContentsMargins(20, 12, 20, 12)
+        layout.setSpacing(12)
+        #: What happens to a change. It is not a fixed sentence: while a recording is
+        #: running the video and audio settings are describing the next one.
+        self.status_label = surfaces.label("", "text_dim", 9.0)
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label, 1)
+        self.done_button = QtWidgets.QPushButton(_("Done"))
+        self.done_button.setObjectName("primary")
+        self.done_button.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+        self.done_button.setDefault(True)
+        layout.addWidget(self.done_button)
+        return holder
+
+    def _scrolled(self, page: QtWidgets.QWidget) -> QtWidgets.QScrollArea:
+        """Wrap one page so that it, and only it, scrolls."""
+        area = QtWidgets.QScrollArea()
+        area.setObjectName("formRow")
+        area.setWidget(page)
+        area.setWidgetResizable(True)
+        area.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        area.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        return area
+
+    # --------------------------------------------------------- page scaffolding
+
+    def _page(self, title: str, subtitle: str) -> tuple[QtWidgets.QWidget,
+                                                        QtWidgets.QVBoxLayout]:
+        page = QtWidgets.QWidget()
+        page.setObjectName("formRow")
+        layout = QtWidgets.QVBoxLayout(page)
+        layout.setContentsMargins(24, 20, 24, 24)
+        layout.setSpacing(0)
+        heading = surfaces.label(_(title), "text", 14.0)
+        font = QtGui.QFont(heading.font())
+        font.setWeight(QtGui.QFont.Weight.DemiBold)
+        heading.setFont(font)
+        self._captions.append((heading, title, False))
+        layout.addWidget(heading)
+        if subtitle:
+            under = surfaces.label(_(subtitle), "text_dim", 9.5)
+            under.setWordWrap(True)
+            self._captions.append((under, subtitle, False))
+            layout.addWidget(under)
+        layout.addSpacing(18)
+        return page, layout
+
+    def _group(self, layout: QtWidgets.QVBoxLayout, title: str) -> None:
+        """A heading over a band of related fields."""
+        label = surfaces.label(_(title), "text", 10.0)
+        font = QtGui.QFont(label.font())
+        font.setWeight(QtGui.QFont.Weight.DemiBold)
+        label.setFont(font)
+        self._captions.append((label, title, False))
+        layout.addWidget(label)
+        layout.addSpacing(10)
+
+    def _field(
+        self, text: str, control: QtWidgets.QWidget, info: str = ""
+    ) -> QtWidgets.QWidget:
+        """A caption above a control, with an optional (i) beside the caption."""
+        holder = QtWidgets.QWidget()
+        holder.setObjectName("formRow")
+        layout = QtWidgets.QVBoxLayout(holder)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        top = QtWidgets.QWidget()
+        top.setObjectName("formRow")
+        top_layout = QtWidgets.QHBoxLayout(top)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(6)
+        label = caption(_(text))
+        self._captions.append((label, text, False))
+        label.setBuddy(control)
+        top_layout.addWidget(label)
+        if info:
+            button = InfoButton(_(info))
+            self._tips.append((button, info))
+            top_layout.addWidget(button)
+        top_layout.addStretch(1)
+        layout.addWidget(top)
+        layout.addWidget(control)
+        return holder
+
+    def _half(self, widget: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        """One field at the width of a grid column, rather than the whole page.
+
+        A combo box 600 px wide to hold the word "Medium" reads as a mistake, and the
+        eye has to travel the width of the window to find the arrow.
+        """
+        holder = QtWidgets.QWidget()
+        holder.setObjectName("formRow")
+        layout = QtWidgets.QHBoxLayout(holder)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+        layout.addWidget(widget, 1)
+        layout.addStretch(1)
+        return holder
+
+    def _row(self, text: str, control: QtWidgets.QWidget) -> QtWidgets.QWidget:
+        """A label on the left, a switch on the right - for the on/off settings."""
+        holder = QtWidgets.QWidget()
+        holder.setObjectName("formRow")
+        layout = QtWidgets.QHBoxLayout(holder)
+        layout.setContentsMargins(0, 5, 0, 5)
+        layout.setSpacing(12)
+        label = surfaces.label(_(text), "text_soft", 9.8)
+        label.setWordWrap(True)
+        self._captions.append((label, text, False))
+        label.setBuddy(control)
+        layout.addWidget(label, 1)
+        layout.addWidget(control)
+        return holder
+
+    def _note(self, text: str) -> QtWidgets.QLabel:
+        """A full-width, word-wrapping line of explanation under a control."""
+        widget = surfaces.label(text, "text_dim", 8.8)
+        widget.setWordWrap(True)
+        widget.setContentsMargins(0, 2, 0, 0)
+        return widget
+
+    def _problem(self, text: str = "") -> QtWidgets.QLabel:
+        """A note in the error colour: the reason something cannot be done."""
+        widget = self._note(text)
+        widget.setStyleSheet(
+            f"color: {theme.COLOURS['error_text']}; background: transparent;"
+        )
+        widget.setVisible(False)
+        return widget
+
+    # ------------------------------------------------------------ the pages
+
+    def _page_recording(self) -> QtWidgets.QWidget:
+        page, layout = self._page("Recording", "Video and where files are saved")
+
+        self.preset_combo = self._combo()
         self._fill(self.preset_combo, self._preset_items())
-        outer.addWidget(self._row("Use", self.preset_combo))
+        layout.addWidget(self._half(self._field("Profile", self.preset_combo)))
         self.preset_note = self._note("")
-        outer.addWidget(self.preset_note)
-        outer.addSpacing(10)
+        layout.addWidget(self.preset_note)
+        layout.addSpacing(20)
 
-        outer.addWidget(self._section("Video"))
-        self.fps_spin = QtWidgets.QSpinBox()
-        self.fps_spin.setRange(5, 240)
-        self.fps_spin.setSuffix(_(" fps"))
-        self.fps_spin.setLocale(QtCore.QLocale.c())
-        self.fps_spin.setKeyboardTracking(False)
-        self.fps_spin.setFixedWidth(CONTROL_WIDTH)
-        outer.addWidget(self._row("Frame rate", self.fps_spin))
-
+        self._group(layout, "Video settings")
+        grid = FieldGrid()
+        self.fps_combo = self._combo()
+        grid.add(self._field("Frame rate", self.fps_combo))
         self.size_combo = self._combo()
         self._fill(self.size_combo, self._size_items())
-        outer.addWidget(self._row("Size", self.size_combo))
+        grid.add(self._field(
+            "Resolution", self.size_combo,
+            "The screen's own size, or scaled down while recording. A smaller file, "
+            "and a copy through system memory to make it.",
+        ))
+        self.profile_combo = self._combo()
+        self._fill(self.profile_combo, self._profile_items())
+        grid.add(self._field(
+            "Format", self.profile_combo,
+            "The codec and what it keeps of the colour. H.265 is smaller, H.264 plays "
+            "everywhere, and 4:4:4 keeps text sharp at the cost of size.",
+        ))
+        self.quality_combo = self._combo()
+        self._fill(self.quality_combo, self._quality_items())
+        grid.add(self._field(
+            "Quality", self.quality_combo,
+            "How hard the encoder tries. It changes the size of the file far more "
+            "than it changes what you can see.",
+        ))
+        layout.addWidget(grid)
 
         #: What the chosen size will really do, which depends on the screen: on a
         #: 1080p monitor "1080p" changes nothing, and saying so is better than leaving
         #: somebody to wonder why the file is the same size.
         self.size_note = self._note("")
-        outer.addWidget(self.size_note)
-
-        self.profile_combo = self._combo()
-        self._fill(self.profile_combo, self._profile_items())
-        outer.addWidget(self._row("Format", self.profile_combo))
-
+        layout.addWidget(self.size_note)
         self.profile_note = self._note("")
-        outer.addWidget(self.profile_note)
-
+        layout.addWidget(self.profile_note)
         #: Why the chosen format cannot be recorded on this machine, in the idiom of
-        #: `Profile.note`. Shown in the error colour, because unlike a note it is the
-        #: reason a format in the list above is greyed out.
-        self.profile_problem = self._note("")
-        self.profile_problem.setStyleSheet(
-            f"color: {theme.COLOURS['error_text']}; background: transparent;"
-        )
-        self.profile_problem.setVisible(False)
-        outer.addWidget(self.profile_problem)
+        #: `Profile.note`. In the error colour, because unlike a note it is the reason
+        #: a format in the list above is greyed out.
+        self.profile_problem = self._problem()
+        layout.addWidget(self.profile_problem)
+        layout.addSpacing(12)
+        layout.addWidget(self._build_estimate())
+        layout.addSpacing(6)
 
         #: The one line that says which encoding path a recording will take.
         self.encoding_note = self._note("")
         self.encoding_note.setVisible(False)
-        outer.addWidget(self.encoding_note)
+        layout.addWidget(self.encoding_note)
 
         self.details_button = QtWidgets.QPushButton("")
+        self.details_button.setObjectName("link")
         self.details_button.setCheckable(True)
         self.details_button.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
-        # Quiet on purpose: this is a disclosure, not an action. The panel's own
-        # `hotkey_problem` sets its colour the same way, for the same reason - one
-        # widget's exception does not belong in `theme.style_sheet()`.
-        self.details_button.setStyleSheet(
-            f"QPushButton {{ background: transparent; border: none; padding: 2px 0;"
-            f" text-align: left; color: {theme.COLOURS['accent_light']}; }}"
-            f"QPushButton:hover {{ color: {theme.COLOURS['text']}; }}"
-        )
         self.details_button.setVisible(False)
-        outer.addWidget(self.details_button)
+        layout.addWidget(self.details_button)
 
-        #: Twelve candidates, several of them with a wrapped sentence of ffmpeg's
-        #: underneath, is more than the panel can grow by - see `DETAILS_HEIGHT`. So the
-        #: rows live in `details_rows` and the box around them scrolls.
         self.details_rows = QtWidgets.QWidget()
         self.details_rows.setObjectName("formRow")
         self._details_layout = QtWidgets.QVBoxLayout(self.details_rows)
         self._details_layout.setContentsMargins(0, 0, 0, 0)
         self._details_layout.setSpacing(1)
-
         self.details_box = QtWidgets.QScrollArea()
         self.details_box.setObjectName("formRow")
         self.details_box.setWidget(self.details_rows)
@@ -461,174 +611,285 @@ class SettingsPanel(surfaces.FloatingSurface):
         )
         self.details_box.setMaximumHeight(DETAILS_HEIGHT)
         self.details_box.setVisible(False)
-        outer.addWidget(self.details_box)
+        layout.addWidget(self.details_box)
+        layout.addSpacing(22)
 
-        self.quality_combo = self._combo()
-        self._fill(self.quality_combo, self._quality_items())
-        outer.addWidget(self._row("Quality", self.quality_combo))
+        self._group(layout, "Saving")
+        folder_row = QtWidgets.QWidget()
+        folder_row.setObjectName("formRow")
+        folder_layout = QtWidgets.QHBoxLayout(folder_row)
+        folder_layout.setContentsMargins(0, 0, 0, 0)
+        folder_layout.setSpacing(8)
+        self.folder_edit = QtWidgets.QLineEdit()
+        self.folder_edit.setReadOnly(True)
+        self.folder_edit.setMinimumWidth(10)
+        self.folder_edit.setCursorPosition(0)
+        self.browse_button = surfaces.IconButton(
+            "folder", _("Choose where recordings are saved"), size=30
+        )
+        self._tips.append((self.browse_button, "Choose where recordings are saved"))
+        folder_layout.addWidget(self.folder_edit, 1)
+        folder_layout.addWidget(self.browse_button)
+        layout.addWidget(self._field("Folder for recordings", folder_row))
+        self.open_folder_button = QtWidgets.QPushButton(_("Open the folder"))
+        self.open_folder_button.setObjectName("link")
+        self.open_folder_button.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+        self._captions.append((self.open_folder_button, "Open the folder", False))
+        layout.addWidget(self.open_folder_button, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+        #: Why the folder cannot be used, beside the field rather than in a dialog.
+        self.folder_problem = self._problem()
+        layout.addWidget(self.folder_problem)
+        layout.addStretch(1)
+        return page
 
-        self.estimate_label = self._note("")
-        outer.addWidget(self.estimate_label)
-        outer.addSpacing(10)
+    def _build_estimate(self) -> QtWidgets.QWidget:
+        """The size estimate, in a box of its own: a figure and what it is worth."""
+        box = QtWidgets.QFrame()
+        box.setObjectName("card")
+        box.setStyleSheet(
+            f"QFrame#card {{ background: {theme.COLOURS['panel']};"
+            f" border: 1px solid {theme.COLOURS['line']}; border-radius: 8px; }}"
+        )
+        layout = QtWidgets.QVBoxLayout(box)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(2)
+        self.estimate_label = surfaces.label("", "text", 10.0)
+        self.estimate_label.setWordWrap(True)
+        layout.addWidget(self.estimate_label)
+        #: Whether the figure above is a measurement from this machine or a table, in
+        #: so many words. "Estimated" and "measured here" are not the same claim.
+        self.estimate_note = surfaces.label("", "text_dim", 8.8)
+        self.estimate_note.setWordWrap(True)
+        layout.addWidget(self.estimate_note)
+        return box
 
-        outer.addWidget(self._section("Audio"))
+    def _page_sound(self) -> QtWidgets.QWidget:
+        page, layout = self._page("Sound", "What is recorded besides the picture")
+
+        self._group(layout, "Microphone")
+        self.mic_switch = Switch()
+        layout.addWidget(self._row("Record the microphone", self.mic_switch))
         self.mic_combo = self._combo()
-        outer.addWidget(self._row("Microphone", self.mic_combo))
+        layout.addWidget(self._half(self._field("Device", self.mic_combo)))
+        self.mic_note = self._note("")
+        self.mic_note.setVisible(False)
+        layout.addWidget(self.mic_note)
+        layout.addSpacing(22)
+
+        self._group(layout, "System sound")
+        self.system_switch = Switch()
+        layout.addWidget(self._row("Record what the computer plays", self.system_switch))
         self.system_combo = self._combo()
-        outer.addWidget(self._row("System sound", self.system_combo))
+        layout.addWidget(self._half(self._field("Source", self.system_combo)))
+        layout.addSpacing(22)
+
+        self._group(layout, "Tracks")
         self.tracks_combo = self._combo()
         self._fill(self.tracks_combo, self._tracks_items())
-        self.tracks_row = self._row("Tracks", self.tracks_combo)
-        outer.addWidget(self.tracks_row)
-        self.tracks_note = self._note(
-            _("Two tracks need both the microphone and the system sound.")
-        )
-        outer.addWidget(self.tracks_note)
-        outer.addSpacing(10)
+        self.tracks_row = self._field("In the file", self.tracks_combo)
+        layout.addWidget(self._half(self.tracks_row))
+        self.tracks_note = self._note("")
+        layout.addWidget(self.tracks_note)
+        layout.addStretch(1)
+        return page
 
-        outer.addWidget(self._section("Camera"))
+    def _page_camera(self) -> QtWidgets.QWidget:
+        page, layout = self._page("Camera", "A picture on top of the recording")
+
         self.webcam_switch = Switch()
         self.webcam_switch.setToolTip(
             _("The camera is drawn on the screen itself, so it reaches the recording "
               "the way the click rings do - and so you can see it too while you record.")
         )
-        outer.addWidget(self._row("Camera in the corner", self.webcam_switch))
+        self._tips.append((
+            self.webcam_switch,
+            "The camera is drawn on the screen itself, so it reaches the recording "
+            "the way the click rings do - and so you can see it too while you record.",
+        ))
+        layout.addWidget(self._row("Show the camera", self.webcam_switch))
+        layout.addSpacing(8)
+
+        #: Everything that only means something with the camera on. Hidden rather than
+        #: only greyed out: six dead controls under an off switch is six questions.
+        self.webcam_body = QtWidgets.QWidget()
+        self.webcam_body.setObjectName("formRow")
+        body = QtWidgets.QVBoxLayout(self.webcam_body)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
 
         self.webcam_combo = self._combo()
-        outer.addWidget(self._row("Which camera", self.webcam_combo))
+        body.addWidget(self._half(self._field("Device", self.webcam_combo)))
+        body.addSpacing(18)
 
+        self._group(body, "Where it sits")
+        self.camera_view = CameraDiagram()
+        body.addWidget(self.camera_view)
+        body.addSpacing(16)
+
+        grid = FieldGrid()
         self.webcam_corner_combo = self._combo()
         self._fill(self.webcam_corner_combo, self._corner_items())
-        outer.addWidget(self._row("Corner", self.webcam_corner_combo))
-
+        grid.add(self._field("Position", self.webcam_corner_combo))
         self.webcam_size_combo = self._combo()
         self._fill(self.webcam_size_combo, self._webcam_size_items())
-        outer.addWidget(self._row("Camera size", self.webcam_size_combo))
-
+        grid.add(self._field("Camera size", self.webcam_size_combo))
         self.webcam_shape_combo = self._combo()
         self._fill(self.webcam_shape_combo, self._webcam_shape_items())
-        outer.addWidget(self._row("Camera shape", self.webcam_shape_combo))
-
+        grid.add(self._field("Camera shape", self.webcam_shape_combo))
         self.webcam_res_combo = self._combo()
-        outer.addWidget(self._row("Camera resolution", self.webcam_res_combo))
+        grid.add(self._field(
+            "Camera resolution", self.webcam_res_combo,
+            "The size the camera itself runs at. The picture is a few hundred pixels "
+            "wide, so the biggest mode is waste - and on this camera it is also the "
+            "slowest.",
+        ))
+        body.addWidget(grid)
+        layout.addWidget(self.webcam_body)
 
         #: Empty, or why there is no camera to choose from.
         self.webcam_note = self._note("")
         self.webcam_note.setVisible(False)
-        outer.addWidget(self.webcam_note)
+        layout.addWidget(self.webcam_note)
+        layout.addStretch(1)
+        return page
 
-        outer.addWidget(self._section("More"))
+    def _page_control(self) -> QtWidgets.QWidget:
+        page, layout = self._page("Control", "What is on the screen, and what starts it")
+
+        self._group(layout, "While recording")
         self.cursor_switch = Switch()
-        outer.addWidget(self._row("Show the cursor", self.cursor_switch))
+        layout.addWidget(self._row("Show the cursor", self.cursor_switch))
         self.clicks_switch = Switch()
-        outer.addWidget(self._row("Highlight clicks", self.clicks_switch))
+        layout.addWidget(self._row("Highlight clicks", self.clicks_switch))
         self.frame_switch = Switch()
         self.frame_switch.setToolTip(
             _("A thin red outline round what is being recorded, on every screen in "
               "the set. It stays on your screen and never reaches the file.")
         )
-        outer.addWidget(self._row("Capture frame", self.frame_switch))
+        self._tips.append((
+            self.frame_switch,
+            "A thin red outline round what is being recorded, on every screen in "
+            "the set. It stays on your screen and never reaches the file.",
+        ))
+        layout.addWidget(self._row("Capture frame", self.frame_switch))
         self.bar_switch = Switch()
-        outer.addWidget(self._row("Floating bar", self.bar_switch))
-        self.countdown_spin = QtWidgets.QSpinBox()
-        self.countdown_spin.setRange(0, 10)
-        self.countdown_spin.setSuffix(_(" s"))
-        self.countdown_spin.setSpecialValueText(_("None"))
-        self.countdown_spin.setLocale(QtCore.QLocale.c())
-        self.countdown_spin.setKeyboardTracking(False)
-        self.countdown_spin.setFixedWidth(CONTROL_WIDTH)
-        outer.addWidget(self._row("Countdown", self.countdown_spin))
+        layout.addWidget(self._row("Floating bar", self.bar_switch))
+        layout.addSpacing(22)
 
-        self.autostop_spin = QtWidgets.QSpinBox()
-        self.autostop_spin.setRange(0, 600)
-        self.autostop_spin.setSuffix(_(" min"))
-        self.autostop_spin.setSpecialValueText(_("Never"))
-        self.autostop_spin.setLocale(QtCore.QLocale.c())
-        self.autostop_spin.setKeyboardTracking(False)
-        self.autostop_spin.setFixedWidth(CONTROL_WIDTH)
-        self.autostop_spin.setToolTip(
-            _("Stop on its own after this long - for a process you start and walk "
-              "away from")
-        )
-        outer.addWidget(self._row("Stop after", self.autostop_spin))
-
-        self.after_combo = QtWidgets.QComboBox()
-        self.after_combo.setFixedWidth(CONTROL_WIDTH)
+        self._group(layout, "Timers")
+        grid = FieldGrid()
+        self.countdown_combo = self._combo()
+        self._fill(self.countdown_combo, self._countdown_items())
+        grid.add(self._field("Countdown", self.countdown_combo))
+        self.autostop_combo = self._combo()
+        self._fill(self.autostop_combo, self._autostop_items())
+        grid.add(self._field(
+            "Stop after", self.autostop_combo,
+            "Stop on its own after this long - for a process you start and walk "
+            "away from",
+        ))
+        self.after_combo = self._combo()
         self._fill(self.after_combo, self._after_items())
-        outer.addWidget(self._row("When it ends", self.after_combo))
-        outer.addSpacing(10)
+        grid.add(self._field("When it ends", self.after_combo))
+        layout.addWidget(grid)
+        layout.addSpacing(22)
 
-        outer.addWidget(self._section("Output"))
-        folder_row = QtWidgets.QWidget()
-        folder_row.setObjectName("formRow")
-        folder_layout = QtWidgets.QHBoxLayout(folder_row)
-        folder_layout.setContentsMargins(0, 2, 0, 2)
-        folder_layout.setSpacing(6)
-        self.folder_edit = QtWidgets.QLineEdit()
-        self.folder_edit.setReadOnly(True)
-        self.folder_edit.setMinimumWidth(10)
-        self.browse_button = surfaces.IconButton(
-            "folder", _("Choose where recordings are saved"), size=28
-        )
-        folder_layout.addWidget(self.folder_edit, 1)
-        folder_layout.addWidget(self.browse_button)
-        outer.addWidget(folder_row)
-        outer.addSpacing(10)
-
-        outer.addWidget(self._section("Hotkey"))
-        self.hotkey_edit = QtWidgets.QLineEdit()
+        self._group(layout, "Hotkeys")
+        self.hotkey_edit = HotkeyEdit()
         self.hotkey_edit.setPlaceholderText("Ctrl+Alt+R")
-        self.hotkey_edit.setFixedWidth(CONTROL_WIDTH)
-        outer.addWidget(self._row("Start / stop", self.hotkey_edit))
-
-        self.hotkey_pause_edit = QtWidgets.QLineEdit()
+        layout.addWidget(self._half(
+            self._field("Start / stop recording", self.hotkey_edit)
+        ))
+        layout.addSpacing(10)
+        self.hotkey_pause_edit = HotkeyEdit()
         self.hotkey_pause_edit.setPlaceholderText("Ctrl+Alt+P")
-        self.hotkey_pause_edit.setFixedWidth(CONTROL_WIDTH)
-        outer.addWidget(self._row("Pause / carry on", self.hotkey_pause_edit))
-
-        self.hotkey_draw_edit = QtWidgets.QLineEdit()
+        layout.addWidget(self._half(
+            self._field("Pause / carry on", self.hotkey_pause_edit)
+        ))
+        layout.addSpacing(10)
+        self.hotkey_draw_edit = HotkeyEdit()
         self.hotkey_draw_edit.setPlaceholderText("Ctrl+Alt+D")
-        self.hotkey_draw_edit.setFixedWidth(CONTROL_WIDTH)
-        self.hotkey_draw_edit.setToolTip(
-            _("Switches between drawing on the screen and working with the application")
-        )
-        outer.addWidget(self._row("Draw / work", self.hotkey_draw_edit))
-        self.hotkey_problem = self._note("")
-        self.hotkey_problem.setStyleSheet(
-            f"color: {theme.COLOURS['error_text']}; background: transparent;"
-        )
-        self.hotkey_problem.setVisible(False)
-        outer.addWidget(self.hotkey_problem)
+        layout.addWidget(self._half(self._field(
+            "Draw / work", self.hotkey_draw_edit,
+            "Switches between drawing on the screen and working with the application",
+        )))
+        self.hotkey_hint = self._note("")
+        layout.addWidget(self.hotkey_hint)
+        self.hotkey_problem = self._problem()
+        layout.addWidget(self.hotkey_problem)
+        layout.addStretch(1)
+        return page
 
-    def _build_header(self) -> QtWidgets.QWidget:
-        """The title row, as a widget rather than a bare layout.
+    def _page_general(self) -> QtWidgets.QWidget:
+        page, layout = self._page("General", "The program itself")
+        self.language_combo = self._combo()
+        self._fill(self.language_combo, self._language_items())
+        layout.addWidget(self._half(self._field("Language", self.language_combo)))
+        self.language_note = self._note("")
+        layout.addWidget(self.language_note)
+        layout.addSpacing(26)
 
-        It is a widget because the panel is dragged by it and `_in_header` needs a
-        rectangle to measure; `formRow` keeps it transparent, so it looks the same as
-        the layout it replaced.
+        self._group(layout, "About")
+        # Which build this is. Not a feature and not filler: the executables carry no
+        # version in their file properties, so without this line the only way to answer
+        # "which one have I got" is to find the installer it came from.
+        from .. import __version__
+
+        self.version_label = surfaces.label(
+            f"ScreenRec {__version__}", "text_soft", 9.5
+        )
+        layout.addWidget(self.version_label)
+        layout.addSpacing(8)
+
+        links = QtWidgets.QWidget()
+        links.setObjectName("formRow")
+        links_layout = QtWidgets.QHBoxLayout(links)
+        links_layout.setContentsMargins(0, 0, 0, 0)
+        links_layout.setSpacing(18)
+        self.page_button = self._link_button("Project page", PROJECT_PAGE)
+        self.source_button = self._link_button("Source code", PROJECT_SOURCE)
+        links_layout.addWidget(self.page_button)
+        links_layout.addWidget(self.source_button)
+        links_layout.addStretch(1)
+        layout.addWidget(links)
+
+        #: Said only when Windows refuses to open a browser, which is the one thing a
+        #: link here can do wrong.
+        self.link_problem = self._problem()
+        layout.addWidget(self.link_problem)
+        layout.addStretch(1)
+        return page
+
+    def _link_button(self, text: str, url: str) -> QtWidgets.QPushButton:
+        """A word that opens an address in whatever browser Windows uses.
+
+        A button and not a rich-text `QLabel`: a label's link colour comes from the
+        palette rather than from `theme`, it is not reachable with Tab, and it answers
+        no key. This one is in the tab order and answers Space like any other button.
         """
-        holder = QtWidgets.QWidget()
-        holder.setObjectName("formRow")
-        header = QtWidgets.QHBoxLayout(holder)
-        header.setContentsMargins(0, 0, 0, 0)
-        header.setSpacing(6)
-        title = surfaces.label(_("Recording settings"), "text", 10.5)
-        font = QtGui.QFont(title.font())
-        font.setWeight(QtGui.QFont.Weight.DemiBold)
-        title.setFont(font)
-        self._captions.append((title, "Recording settings", False))
-        header.addWidget(title)
-        header.addStretch(1)
-        self.close_button = surfaces.IconButton("close", _("Close"), size=26)
-        header.addWidget(self.close_button)
-        self.header = holder
-        return holder
+        button = QtWidgets.QPushButton(_(text))
+        button.setObjectName("link")
+        button.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
+        button.setToolTip(url)
+        button.setAccessibleDescription(url)
+        self._captions.append((button, text, False))
+        button.clicked.connect(lambda _checked=False, u=url: self._open_url(u))
+        return button
 
-    def _section(self, text: str) -> QtWidgets.QLabel:
-        """A section heading, registered so `retranslate` can rewrite it."""
-        widget = _heading(_(text))
-        self._captions.append((widget, text, True))
-        return widget
+    def _open_url(self, url: str) -> None:
+        """Hand an address to the browser, and say so here if that fails.
+
+        `QDesktopServices.openUrl` answers False rather than raising, and silence after
+        a click is the one outcome a link must not have.
+        """
+        self.link_problem.setVisible(False)
+        if not QtGui.QDesktopServices.openUrl(QtCore.QUrl(url)):
+            self.link_problem.setText(
+                _("That link would not open: {url}").format(url=url)
+            )
+            self.link_problem.setVisible(True)
+
+    # ------------------------------------------------------------------ lists
 
     def _language_items(self) -> list[tuple[str, object]]:
         """Each language in its own name, in `i18n.LANGUAGES` order.
@@ -663,6 +924,68 @@ class SettingsPanel(surfaces.FloatingSurface):
     def _after_items(self) -> list[tuple[str, object]]:
         return [(_(label), key) for key, label in shellops.ACTIONS]
 
+    def _size_items(self) -> list[tuple[str, object]]:
+        """The sizes, largest first, with the screen's own size at the top."""
+        items: list[tuple[str, object]] = [(_("As on screen"), 0)]
+        for height in config_mod.MAX_HEIGHTS:
+            if height:
+                items.append((_("{height}p").format(height=height), height))
+        return items
+
+    def _fps_items(self) -> list[tuple[str, object]]:
+        """The usual rates, plus whatever the settings actually hold.
+
+        A rate set by hand in the JSON - 25 for PAL footage, say - must survive the
+        window being opened, so it is added rather than rounded to a neighbour.
+        """
+        stored = int(self.settings.framerate or 0)
+        rates = sorted(set(FRAME_RATES) | ({stored} if stored > 0 else set()))
+        return [(_("{rate} fps").format(rate=rate), rate) for rate in rates]
+
+    def _countdown_items(self) -> list[tuple[str, object]]:
+        values = sorted(set(COUNTDOWNS) | {int(self.settings.countdown or 0)})
+        items: list[tuple[str, object]] = []
+        for value in values:
+            items.append(
+                (_("No countdown") if not value
+                 else _("{seconds} s").format(seconds=value), value)
+            )
+        return items
+
+    def _autostop_items(self) -> list[tuple[str, object]]:
+        stored = int(getattr(self.settings, "auto_stop_minutes", 0) or 0)
+        values = sorted(set(AUTO_STOPS) | {stored})
+        items: list[tuple[str, object]] = []
+        for value in values:
+            items.append(
+                (_("No limit") if not value
+                 else _("{minutes} min").format(minutes=value), value)
+            )
+        return items
+
+    def _corner_items(self) -> list[tuple[str, object]]:
+        return [
+            (_("Top left"), "top_left"),
+            (_("Top right"), "top_right"),
+            (_("Bottom left"), "bottom_left"),
+            (_("Bottom right"), "bottom_right"),
+        ]
+
+    def _webcam_size_items(self) -> list[tuple[str, object]]:
+        return [
+            (_("Tiny"), "tiny"),
+            (_("Small"), "small"),
+            (_("Medium"), "medium"),
+            (_("Large"), "large"),
+        ]
+
+    def _webcam_shape_items(self) -> list[tuple[str, object]]:
+        return [
+            (_("Rounded rectangle"), "rounded"),
+            (_("Circle"), "circle"),
+            (_("Rectangle"), "rectangle"),
+        ]
+
     def _fill(
         self, combo: QtWidgets.QComboBox, items: list[tuple[str, object]]
     ) -> None:
@@ -685,49 +1008,29 @@ class SettingsPanel(surfaces.FloatingSurface):
 
     def _combo(self) -> QtWidgets.QComboBox:
         combo = QtWidgets.QComboBox()
-        combo.setFixedWidth(CONTROL_WIDTH)
-        # Without this a single long device name decides the panel's width.
+        # Without this a single long device name decides the column's width.
         combo.setSizeAdjustPolicy(
             QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
         )
         combo.setMinimumContentsLength(8)
+        combo.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
         view = combo.view()
         if view is not None:
             view.setTextElideMode(QtCore.Qt.TextElideMode.ElideMiddle)
         return combo
 
-    def _note(self, text: str) -> QtWidgets.QLabel:
-        """A full-width, word-wrapping line of explanation under a control."""
-        widget = surfaces.label(text, "text_dim", 8.5)
-        widget.setWordWrap(True)
-        widget.setContentsMargins(0, 1, 0, 3)
-        return widget
-
-    def _row(self, text: str, control: QtWidgets.QWidget) -> QtWidgets.QWidget:
-        """A label on the left, `control` right-aligned in a fixed-width column."""
-        holder = QtWidgets.QWidget()
-        holder.setObjectName("formRow")
-        layout = QtWidgets.QHBoxLayout(holder)
-        layout.setContentsMargins(0, 3, 0, 3)
-        layout.setSpacing(8)
-        caption = surfaces.label(_(text), "text_soft", 9.5)
-        self._captions.append((caption, text, False))
-        layout.addWidget(caption, 1)
-        column = QtWidgets.QWidget()
-        column.setObjectName("formRow")
-        column.setFixedWidth(CONTROL_WIDTH)
-        column_layout = QtWidgets.QHBoxLayout(column)
-        column_layout.setContentsMargins(0, 0, 0, 0)
-        column_layout.setSpacing(0)
-        column_layout.addStretch(1)
-        column_layout.addWidget(control)
-        layout.addWidget(column)
-        return holder
+    # ------------------------------------------------------------------ wiring
 
     def _wire(self) -> None:
         self.close_button.clicked.connect(self._close)
+        self.done_button.clicked.connect(self._close)
+        for index, (button, _word) in enumerate(self._nav):
+            button.clicked.connect(lambda _checked, i=index: self._show_index(i))
         self.language_combo.currentIndexChanged.connect(self._on_language)
-        self.fps_spin.valueChanged.connect(self._on_framerate)
+        self.fps_combo.currentIndexChanged.connect(self._on_framerate)
         self.size_combo.currentIndexChanged.connect(self._on_size)
         self.webcam_switch.toggled.connect(self._on_webcam_enabled)
         self.webcam_combo.currentIndexChanged.connect(self._on_webcam_device)
@@ -735,8 +1038,11 @@ class SettingsPanel(surfaces.FloatingSurface):
         self.webcam_size_combo.currentIndexChanged.connect(self._on_webcam_size)
         self.webcam_shape_combo.currentIndexChanged.connect(self._on_webcam_shape)
         self.webcam_res_combo.currentIndexChanged.connect(self._on_webcam_resolution)
+        self.camera_view.cornerPicked.connect(self._on_corner_picked)
         self.profile_combo.currentIndexChanged.connect(self._on_profile)
         self.quality_combo.currentIndexChanged.connect(self._on_quality)
+        self.mic_switch.toggled.connect(self._on_mic_switch)
+        self.system_switch.toggled.connect(self._on_system_switch)
         self.mic_combo.currentIndexChanged.connect(self._on_mic)
         self.system_combo.currentIndexChanged.connect(self._on_system)
         self.tracks_combo.currentIndexChanged.connect(self._on_tracks)
@@ -744,15 +1050,45 @@ class SettingsPanel(surfaces.FloatingSurface):
         self.clicks_switch.toggled.connect(self._on_clicks)
         self.frame_switch.toggled.connect(self._on_frame)
         self.bar_switch.toggled.connect(self._on_bar)
-        self.countdown_spin.valueChanged.connect(self._on_countdown)
+        self.countdown_combo.currentIndexChanged.connect(self._on_countdown)
         self.browse_button.clicked.connect(self._browse)
-        self.hotkey_edit.editingFinished.connect(self._on_hotkey)
-        self.hotkey_pause_edit.editingFinished.connect(self._on_hotkey_pause)
-        self.hotkey_draw_edit.editingFinished.connect(self._on_hotkey_draw)
+        self.open_folder_button.clicked.connect(self._open_folder)
         self.preset_combo.currentIndexChanged.connect(self._on_preset)
-        self.autostop_spin.valueChanged.connect(self._on_autostop)
+        self.autostop_combo.currentIndexChanged.connect(self._on_autostop)
         self.after_combo.currentIndexChanged.connect(self._on_after)
         self.details_button.toggled.connect(self._on_details)
+        for field, attribute in (
+            (self.hotkey_edit, "hotkey"),
+            (self.hotkey_pause_edit, "hotkey_pause"),
+            (self.hotkey_draw_edit, "hotkey_annotate"),
+        ):
+            field.captured.connect(
+                lambda text, a=attribute, f=field: self._on_hotkey_captured(f, a, text)
+            )
+            field.capturing.connect(self._on_hotkey_capturing)
+
+    # ------------------------------------------------------------------- pages
+
+    def show_page(self, key: str) -> None:
+        """Open one page by its key in `PAGES`. Unknown keys are ignored."""
+        for index, (page_key, _icon, _word) in enumerate(PAGES):
+            if page_key == key:
+                self._show_index(index)
+                return
+
+    def current_page(self) -> str:
+        return PAGES[self.stack.currentIndex()][0]
+
+    def _show_index(self, index: int) -> None:
+        index = max(0, min(index, self.stack.count() - 1))
+        self.stack.setCurrentIndex(index)
+        button = self._nav[index][0]
+        if not button.isChecked():
+            was_blocked = button.blockSignals(True)
+            try:
+                button.setChecked(True)
+            finally:
+                button.blockSignals(was_blocked)
 
     # ------------------------------------------------------------- language
 
@@ -760,7 +1096,7 @@ class SettingsPanel(surfaces.FloatingSurface):
         """Switch the whole program's language and remember the choice.
 
         `set_language` emits `i18n.notifier.changed`, which arrives back here as
-        `_on_language_switched` and rebuilds this panel's own text, so the panel the
+        `_on_language_switched` and rebuilds this window's own text, so the window the
         user is looking at changes with the click rather than at the next opening.
         """
         if self._loading:
@@ -775,22 +1111,23 @@ class SettingsPanel(surfaces.FloatingSurface):
         self._write()  # the application hears `changed` and saves the file
 
     def _on_language_switched(self, _code: str) -> None:
-        """`i18n.notifier.changed` arrived - from this panel or from anywhere else."""
+        """`i18n.notifier.changed` arrived - from this window or from anywhere else."""
         try:
             self.retranslate()
         except RuntimeError:
-            # The panel's C++ side has been deleted while the notifier still held the
-            # connection (a panel dropped without `deleteLater` having run yet). There
-            # is nothing left to retranslate, and this must not take the window down.
+            # The window's C++ side has been deleted while the notifier still held the
+            # connection (one dropped without `deleteLater` having run yet). There is
+            # nothing left to retranslate, and this must not take the program down.
             pass
 
     def retranslate(self) -> None:
-        """Say everything on the panel again in the language now in force.
+        """Say everything on the window again in the language now in force.
 
-        Every string the user reads is rebuilt here: the captions registered by `_row`
-        and `_section`, the fixed combo boxes, the two device lists, the notes, the
-        tool tips and whatever complaint the hotkey boxes are showing. `_loading` is
-        held throughout so that nothing of this counts as the user changing a setting.
+        Every string the user reads is rebuilt here: the captions registered by `_field`,
+        `_row`, `_group` and `_page`, the sidebar, the fixed combo boxes, the two device
+        lists, the notes, the tool tips and whatever complaint the hotkey boxes are
+        showing. `_loading` is held throughout so that nothing of this counts as the
+        user changing a setting.
         """
         was_loading = self._loading
         self._loading = True
@@ -798,6 +1135,12 @@ class SettingsPanel(surfaces.FloatingSurface):
             for widget, source, upper in self._captions:
                 text = _(source)
                 widget.setText(text.upper() if upper else text)
+            for button, source in self._nav:
+                button.setText(_(source))
+            for widget, source in self._tips:
+                widget.setToolTip(_(source))
+                if isinstance(widget, InfoButton):
+                    widget.set_text(_(source))
             self._retranslate_fixed()
             self._fill(self.language_combo, self._language_items())
             # The switch may have come from another window, so the row shows the
@@ -809,38 +1152,30 @@ class SettingsPanel(surfaces.FloatingSurface):
             self._fill(self.quality_combo, self._quality_items())
             self._fill(self.tracks_combo, self._tracks_items())
             self._fill(self.after_combo, self._after_items())
+            self._fill(self.size_combo, self._size_items())
+            self._fill(self.fps_combo, self._fps_items())
+            self._fill(self.countdown_combo, self._countdown_items())
+            self._fill(self.autostop_combo, self._autostop_items())
+            self._fill(self.webcam_corner_combo, self._corner_items())
+            self._fill(self.webcam_size_combo, self._webcam_size_items())
+            self._fill(self.webcam_shape_combo, self._webcam_shape_items())
             self._fill_mic_combo()
             self._fill_system_combo()
             self._refresh_preset()
             self._show_hotkey_message()
         finally:
             self._loading = was_loading
-        # Recomputes the estimate line and the profile note, and refits the panel: the
-        # same sentence is a different height in another language.
         self._update_enabled()
 
     def _retranslate_fixed(self) -> None:
         """The strings that are not a caption and not a list item."""
         self.close_button.setToolTip(_("Close"))
-        self.browse_button.setToolTip(_("Choose where recordings are saved"))
-        self.fps_spin.setSuffix(_(" fps"))
-        self.countdown_spin.setSuffix(_(" s"))
-        self.countdown_spin.setSpecialValueText(_("None"))
-        self.autostop_spin.setSuffix(_(" min"))
-        self.autostop_spin.setSpecialValueText(_("Never"))
-        self.autostop_spin.setToolTip(
-            _("Stop on its own after this long - for a process you start and walk "
-              "away from")
-        )
-        self.frame_switch.setToolTip(
-            _("A thin red outline round what is being recorded, on every screen in "
-              "the set. It stays on your screen and never reaches the file.")
-        )
-        self.hotkey_draw_edit.setToolTip(
-            _("Switches between drawing on the screen and working with the application")
-        )
+        self.done_button.setText(_("Done"))
         self.tracks_note.setText(
             _("Two tracks need both the microphone and the system sound.")
+        )
+        self.hotkey_hint.setText(
+            _("Click a box and press the keys. Esc leaves it as it was.")
         )
         self._set_details_text()
         self._fill_details()
@@ -848,6 +1183,7 @@ class SettingsPanel(surfaces.FloatingSurface):
             _("Everything changes at once. The player is a separate program and "
               "takes the new language the next time it opens.")
         )
+        self._write_status()
 
     # ------------------------------------------------------------- devices
 
@@ -859,7 +1195,7 @@ class SettingsPanel(surfaces.FloatingSurface):
         """Rebuild the two device lists, keeping what the settings asked for.
 
         Enumeration is the caller's job - it owns the ffmpeg path and does it off the
-        first paint. The panel only shows what it is handed.
+        first paint. The window only shows what it is handed.
         """
         self.mics = list(mics)
         self.loopbacks = list(loopbacks)
@@ -895,9 +1231,12 @@ class SettingsPanel(surfaces.FloatingSurface):
             self.mic_combo.setCurrentIndex(1)
         else:
             self.mic_combo.setCurrentIndex(0)
-        if not self.mics:
+        if self._devices_known and not self.mics:
+            self.mic_note.setText(_("No microphone was found on this machine."))
+            self.mic_note.setVisible(True)
             self.mic_combo.setToolTip(_("No microphone was found on this machine."))
         else:
+            self.mic_note.setVisible(False)
             self.mic_combo.setToolTip(self.mic_combo.currentText())
 
     def _fill_system_combo(self) -> None:
@@ -1002,10 +1341,12 @@ class SettingsPanel(surfaces.FloatingSurface):
                 settings.language or i18n.language()
             )
             self.language_combo.setCurrentIndex(max(0, index))
-            self.fps_spin.setValue(settings.framerate)
+            self._fill(self.fps_combo, self._fps_items())
+            index = self.fps_combo.findData(int(settings.framerate))
+            self.fps_combo.setCurrentIndex(max(0, index))
             index = self.size_combo.findData(settings.max_height)
             self.size_combo.setCurrentIndex(max(0, index))
-            self.webcam_switch.setChecked(bool(settings.webcam_enabled))
+            self.webcam_switch.set_checked_now(bool(settings.webcam_enabled))
             self._fill_cameras()
             index = self.webcam_combo.findData(settings.webcam_device)
             self.webcam_combo.setCurrentIndex(max(0, index))
@@ -1025,6 +1366,8 @@ class SettingsPanel(surfaces.FloatingSurface):
             self._fill_mic_combo()
             self._fill_system_combo()
             corrected = self._adopt_shown_devices()
+            self.mic_switch.set_checked_now(bool(settings.mic_enabled))
+            self.system_switch.set_checked_now(bool(settings.system_audio_enabled))
             index = self.tracks_combo.findData(settings.audio_mode)
             self.tracks_combo.setCurrentIndex(max(0, index))
             self.cursor_switch.set_checked_now(settings.draw_mouse)
@@ -1033,13 +1376,20 @@ class SettingsPanel(surfaces.FloatingSurface):
                 bool(getattr(settings, CAPTURE_FRAME_ATTR, CAPTURE_FRAME_DEFAULT))
             )
             self.bar_switch.set_checked_now(settings.show_island)
-            self.countdown_spin.setValue(settings.countdown)
+            self._fill(self.countdown_combo, self._countdown_items())
+            index = self.countdown_combo.findData(int(settings.countdown))
+            self.countdown_combo.setCurrentIndex(max(0, index))
             self.folder_edit.setText(str(settings.resolved_output_dir()))
             self.folder_edit.setToolTip(self.folder_edit.text())
+            self.folder_edit.setCursorPosition(0)
             self.hotkey_edit.setText(settings.hotkey)
             self.hotkey_pause_edit.setText(getattr(settings, "hotkey_pause", ""))
             self.hotkey_draw_edit.setText(getattr(settings, "hotkey_annotate", ""))
-            self.autostop_spin.setValue(getattr(settings, "auto_stop_minutes", 0))
+            self._fill(self.autostop_combo, self._autostop_items())
+            index = self.autostop_combo.findData(
+                int(getattr(settings, "auto_stop_minutes", 0) or 0)
+            )
+            self.autostop_combo.setCurrentIndex(max(0, index))
             index = self.after_combo.findData(getattr(settings, "after_recording", ""))
             self.after_combo.setCurrentIndex(max(0, index))
             self._refresh_preset()
@@ -1053,10 +1403,10 @@ class SettingsPanel(surfaces.FloatingSurface):
             self._write()
 
     def set_capture_size(self, width: int, height: int) -> None:
-        """Tell the panel what is actually being captured, for the size estimate.
+        """Tell the window what is actually being captured, for the size estimate.
 
-        The panel does not know the source - that is the bar's business - so until it is
-        told it estimates for `DEFAULT_CAPTURE` and the line says it is an estimate.
+        The window does not know the source - that is the bar's business - so until it
+        is told it estimates for `DEFAULT_CAPTURE` and the line says it is an estimate.
         """
         size = (max(1, int(width)), max(1, int(height)))
         if size != self._capture_size:
@@ -1068,6 +1418,24 @@ class SettingsPanel(surfaces.FloatingSurface):
 
     def capture_size(self) -> tuple[int, int]:
         return self._capture_size
+
+    def set_recording(self, recording: bool) -> None:
+        """Tell the window whether a take is running.
+
+        Everything about the picture and the sound is read when a recording starts, so
+        while one is running those controls describe the *next* take. Rather than let
+        somebody change the frame rate mid-take and wonder why nothing happened, they
+        are disabled and the footer says why. The language, the shortcuts, the floating
+        bar and the folder stay live, because those really do apply at once.
+        """
+        recording = bool(recording)
+        if recording == self._recording:
+            return
+        self._recording = recording
+        self._update_enabled()
+
+    def recording(self) -> bool:
+        return self._recording
 
     def _write(self) -> None:
         """One place to announce a write, so no handler can forget to.
@@ -1114,10 +1482,11 @@ class SettingsPanel(surfaces.FloatingSurface):
         self.refresh_from_settings()
         self._write()
 
-    def _on_autostop(self, value: int) -> None:
+    def _on_autostop(self, _index: int) -> None:
         if self._loading:
             return
-        self.settings.auto_stop_minutes = int(value)
+        value = self.autostop_combo.currentData()
+        self.settings.auto_stop_minutes = int(value or 0)
         self._write()
 
     def _on_after(self, _index: int) -> None:
@@ -1126,59 +1495,90 @@ class SettingsPanel(surfaces.FloatingSurface):
         self.settings.after_recording = self.after_combo.currentData() or ""
         self._write()
 
-    def _on_hotkey_pause(self) -> None:
-        self._set_hotkey_field(
-            self.hotkey_pause_edit, "hotkey_pause", "Ctrl+Alt+P"
-        )
+    # ------------------------------------------------------------- shortcuts
 
-    def _on_hotkey_draw(self) -> None:
-        self._set_hotkey_field(
-            self.hotkey_draw_edit, "hotkey_annotate", "Ctrl+Alt+D"
-        )
+    def _on_hotkey_capturing(self, armed: bool) -> None:
+        """A box has started or stopped waiting. Pass it on and say so."""
+        self.hotkey_capture.emit(bool(armed))
+        if armed:
+            self._say_hotkey("")
 
-    def _set_hotkey_field(self, field, attribute: str, placeholder: str) -> None:
-        """Validate and store one hotkey, refusing bad text in words.
+    def _on_hotkey_captured(
+        self, field: HotkeyEdit, attribute: str, text: str
+    ) -> None:
+        """Store a shortcut the user just pressed, unless another one has it.
 
-        An empty field is allowed and means the shortcut is off; anything else has to
-        parse, or the setting is left alone and the old text put back - silently
-        accepting "Ctrl+" would give a shortcut that never fires and no reason why.
+        A clash inside this program is the only one that can be checked: whether some
+        other application has already asked Windows for the combination is not knowable
+        from here, and `hotkeys.HotkeyListener.start` reports that when it fails.
         """
         if self._loading:
             return
-        text = field.text().strip()
-        if not text:
-            setattr(self.settings, attribute, "")
-            self._say_hotkey("")
-            self._write()
-            return
         parsed = hotkeys_mod.parse_hotkey(text)
         if parsed is None:
+            field.setText(getattr(self.settings, attribute, "") or "")
+            return
+        canonical = hotkeys_mod.format_hotkey(*parsed)
+        clash = self._clashing_name(attribute, canonical)
+        if clash:
             self._say_hotkey(
-                "\u201c{text}\u201d is not a shortcut this understands. "
-                "Try something like {placeholder}.",
-                text=text,
-                placeholder=placeholder,
+                "{shortcut} is already {name}. The shortcut is unchanged.",
+                shortcut=canonical,
+                name=clash,
             )
             field.setText(getattr(self.settings, attribute, "") or "")
             return
-        setattr(self.settings, attribute, hotkeys_mod.format_hotkey(*parsed))
-        field.setText(getattr(self.settings, attribute))
         self._say_hotkey("")
+        field.setText(canonical)
+        if canonical == getattr(self.settings, attribute, ""):
+            return  # nothing changed; do not wake the caller up to re-register it
+        setattr(self.settings, attribute, canonical)
         self._write()
 
-    def _size_items(self) -> list[tuple[str, object]]:
-        """The sizes, largest first, with the screen's own size at the top."""
-        items: list[tuple[str, object]] = [(_("As on screen"), 0)]
-        for height in config_mod.MAX_HEIGHTS:
-            if height:
-                items.append((_("{height}p").format(height=height), height))
-        return items
+    def _clashing_name(self, attribute: str, canonical: str) -> str:
+        """What else this program already uses `canonical` for, in words, or ""."""
+        others = {
+            "hotkey": "start and stop",
+            "hotkey_pause": "pause and carry on",
+            "hotkey_annotate": "draw and work",
+        }
+        for other, name in others.items():
+            if other == attribute:
+                continue
+            if (getattr(self.settings, other, "") or "") == canonical:
+                return _(name)
+        return ""
+
+    def _say_hotkey(self, template: str, **values: str) -> None:
+        """Show a complaint about a shortcut, or clear it with an empty template.
+
+        The English template and its values are kept rather than only the finished
+        sentence, so `retranslate` can say the same thing again instead of swallowing
+        a message the user has not read yet.
+        """
+        self._hotkey_message = (template, dict(values)) if template else None
+        self._show_hotkey_message()
+
+    def _show_hotkey_message(self) -> None:
+        """Paint whatever complaint is current, in the language now in force."""
+        if self._hotkey_message is None:
+            self.hotkey_problem.setText("")
+            self.hotkey_problem.setVisible(False)
+            return
+        template, values = self._hotkey_message
+        self.hotkey_problem.setText(_(template).format(**values))
+        self.hotkey_problem.setVisible(True)
+
+    # ----------------------------------------------------------------- video
 
     def _on_size(self, _index: int) -> None:
+        if self._loading:
+            return
         value = self.size_combo.currentData()
         self.settings.max_height = int(value) if value else 0
         self._write_size_note()
-        self.changed.emit()
+        self._update_estimate()
+        self._write()
 
     def _write_size_note(self) -> None:
         """One line on what this choice does to the screen that is about to be captured.
@@ -1205,16 +1605,101 @@ class SettingsPanel(surfaces.FloatingSurface):
               "and the frame rate held when it was measured.")
         )
 
-    def _corner_items(self) -> list[tuple[str, object]]:
-        return [
-            (_("Top left"), "top_left"),
-            (_("Top right"), "top_right"),
-            (_("Bottom left"), "bottom_left"),
-            (_("Bottom right"), "bottom_right"),
-        ]
+    def _on_framerate(self, _index: int) -> None:
+        if self._loading:
+            return
+        value = self.fps_combo.currentData()
+        if not value:
+            return
+        self.settings.framerate = int(value)
+        self._update_estimate()
+        self._write()
 
-    def _webcam_size_items(self) -> list[tuple[str, object]]:
-        return [(_("Small"), "small"), (_("Medium"), "medium"), (_("Large"), "large")]
+    def _on_profile(self, _index: int) -> None:
+        if self._loading:
+            return
+        key = self.profile_combo.currentData()
+        self.settings.profile = key or config_mod.DEFAULT_PROFILE
+        self._update_estimate()
+        self._write()
+
+    def _on_quality(self, _index: int) -> None:
+        if self._loading:
+            return
+        level = self.quality_combo.currentData()
+        self.settings.quality_level = level or config_mod.DEFAULT_QUALITY
+        self._update_estimate()
+        self._write()
+
+    # ----------------------------------------------------------------- sound
+
+    def _on_mic_switch(self, on: bool) -> None:
+        """The switch picks a device or turns the list off; the list is still the model.
+
+        A switch turned on with no device chosen takes the first real one, because
+        "on" with nothing selected would record silence.
+        """
+        if self._loading:
+            return
+        if not on:
+            self.mic_combo.setCurrentIndex(0)  # the "Off" row; `_on_mic` does the rest
+            return
+        if self.mic_combo.currentIndex() > 0:
+            return
+        if self.mic_combo.count() > 1:
+            self.mic_combo.setCurrentIndex(1)
+            return
+        # Nothing to turn on. Put the switch back rather than claim a microphone.
+        self.mic_switch.set_checked_now(False)
+        self._update_enabled()
+
+    def _on_system_switch(self, on: bool) -> None:
+        if self._loading:
+            return
+        if not on:
+            self.system_combo.setCurrentIndex(0)
+            return
+        if self.system_combo.currentIndex() > 0:
+            return
+        self.system_combo.setCurrentIndex(1)  # the default playback device
+
+    def _on_mic(self, _index: int) -> None:
+        if self._loading:
+            return
+        data = self.mic_combo.currentData()
+        if data == _OFF or data is None:
+            self.settings.mic_enabled = False
+        else:
+            self.settings.mic_enabled = True
+            self.settings.mic_device = str(data)
+            self.settings.mic_label = self.mic_combo.currentText()
+        self.mic_combo.setToolTip(self.mic_combo.currentText())
+        self.mic_switch.set_checked_now(bool(self.settings.mic_enabled))
+        self._update_enabled()
+        self._write()
+
+    def _on_system(self, _index: int) -> None:
+        if self._loading:
+            return
+        data = self.system_combo.currentData()
+        if data == _OFF or data is None:
+            self.settings.system_audio_enabled = False
+        else:
+            self.settings.system_audio_enabled = True
+            self.settings.system_audio_device = int(data)
+        self.system_combo.setToolTip(self.system_combo.currentText())
+        self.system_switch.set_checked_now(bool(self.settings.system_audio_enabled))
+        self._update_enabled()
+        self._write()
+
+    def _on_tracks(self, _index: int) -> None:
+        if self._loading:
+            return
+        mode = self.tracks_combo.currentData()
+        self.settings.audio_mode = mode or config_mod.AUDIO_MIX
+        self._write()
+
+    # ---------------------------------------------------------------- camera
 
     def _fill_cameras(self) -> None:
         """List the cameras Windows reports, or say there are none.
@@ -1236,22 +1721,12 @@ class SettingsPanel(surfaces.FloatingSurface):
             self.webcam_note.setVisible(not found)
             if not found:
                 self.webcam_note.setText(_("No camera was found on this machine."))
-        items: list[tuple[str, object]] = [(_("First one found"), "")]
+        # "Choose for me" rather than "First one found": it says what the program will
+        # do, and every other entry is a real device name beside it.
+        items: list[tuple[str, object]] = [(_("Choose for me"), "")]
         for device in found:
             items.append((device.description(), device.description()))
         self._fill(self.webcam_combo, items)
-
-    def _on_webcam_enabled(self, on: bool) -> None:
-        self.settings.webcam_enabled = bool(on)
-        self._update_enabled()
-        self.changed.emit()
-
-    def _webcam_shape_items(self) -> list[tuple[str, object]]:
-        return [
-            (_("Rounded rectangle"), "rounded"),
-            (_("Circle"), "circle"),
-            (_("Rectangle"), "rectangle"),
-        ]
 
     def _fill_resolutions(self) -> None:
         """The chosen camera's own modes, with the frame rate each can really do.
@@ -1277,7 +1752,16 @@ class SettingsPanel(surfaces.FloatingSurface):
             ))
         self._fill(self.webcam_res_combo, items)
 
+    def _on_webcam_enabled(self, on: bool) -> None:
+        if self._loading:
+            return
+        self.settings.webcam_enabled = bool(on)
+        self._update_enabled()
+        self.changed.emit()
+
     def _on_webcam_device(self, _index: int) -> None:
+        if self._loading:
+            return
         value = self.webcam_combo.currentData()
         self.settings.webcam_device = str(value or "")
         # A different camera has different modes, and the one that was chosen may not
@@ -1292,84 +1776,53 @@ class SettingsPanel(surfaces.FloatingSurface):
         self.changed.emit()
 
     def _on_webcam_shape(self, _index: int) -> None:
+        if self._loading:
+            return
         value = self.webcam_shape_combo.currentData()
         if value:
             self.settings.webcam_shape = str(value)
+            self._refresh_camera_view()
             self.changed.emit()
 
     def _on_webcam_resolution(self, _index: int) -> None:
+        if self._loading:
+            return
         value = self.webcam_res_combo.currentData()
         self.settings.webcam_resolution = str(value or "")
         self.changed.emit()
 
     def _on_webcam_corner(self, _index: int) -> None:
+        if self._loading:
+            return
         value = self.webcam_corner_combo.currentData()
         if value:
             self.settings.webcam_corner = str(value)
+            self._refresh_camera_view()
             self.changed.emit()
 
     def _on_webcam_size(self, _index: int) -> None:
+        if self._loading:
+            return
         value = self.webcam_size_combo.currentData()
         if value:
             self.settings.webcam_size = str(value)
+            self._refresh_camera_view()
             self.changed.emit()
 
-    def _on_framerate(self, value: int) -> None:
-        if self._loading:
-            return
-        self.settings.framerate = int(value)
-        self._update_estimate()
-        self._write()
+    def _on_corner_picked(self, corner: str) -> None:
+        """The diagram was clicked. The list is still where the value comes from."""
+        index = self.webcam_corner_combo.findData(corner)
+        if index >= 0:
+            self.webcam_corner_combo.setCurrentIndex(index)
 
-    def _on_profile(self, _index: int) -> None:
-        if self._loading:
-            return
-        key = self.profile_combo.currentData()
-        self.settings.profile = key or config_mod.DEFAULT_PROFILE
-        self._update_estimate()
-        self._write()
+    def _refresh_camera_view(self) -> None:
+        self.camera_view.set_placement(
+            self.settings.webcam_corner,
+            self.settings.webcam_size,
+            self.settings.webcam_shape,
+        )
 
-    def _on_quality(self, _index: int) -> None:
-        if self._loading:
-            return
-        level = self.quality_combo.currentData()
-        self.settings.quality_level = level or config_mod.DEFAULT_QUALITY
-        self._update_estimate()
-        self._write()
-
-    def _on_mic(self, _index: int) -> None:
-        if self._loading:
-            return
-        data = self.mic_combo.currentData()
-        if data == _OFF or data is None:
-            self.settings.mic_enabled = False
-        else:
-            self.settings.mic_enabled = True
-            self.settings.mic_device = str(data)
-            self.settings.mic_label = self.mic_combo.currentText()
-        self.mic_combo.setToolTip(self.mic_combo.currentText())
-        self._update_enabled()
-        self._write()
-
-    def _on_system(self, _index: int) -> None:
-        if self._loading:
-            return
-        data = self.system_combo.currentData()
-        if data == _OFF or data is None:
-            self.settings.system_audio_enabled = False
-        else:
-            self.settings.system_audio_enabled = True
-            self.settings.system_audio_device = int(data)
-        self.system_combo.setToolTip(self.system_combo.currentText())
-        self._update_enabled()
-        self._write()
-
-    def _on_tracks(self, _index: int) -> None:
-        if self._loading:
-            return
-        mode = self.tracks_combo.currentData()
-        self.settings.audio_mode = mode or config_mod.AUDIO_MIX
-        self._write()
+    # --------------------------------------------------------------- control
 
     def _on_cursor(self, checked: bool) -> None:
         if self._loading:
@@ -1386,8 +1839,6 @@ class SettingsPanel(surfaces.FloatingSurface):
     def _on_frame(self, checked: bool) -> None:
         if self._loading:
             return
-        # See the module docstring: `config.Settings` has no field for this yet, so it
-        # lives on the object and is not written to the JSON file.
         setattr(self.settings, CAPTURE_FRAME_ATTR, bool(checked))
         self._write()
 
@@ -1397,11 +1848,14 @@ class SettingsPanel(surfaces.FloatingSurface):
         self.settings.show_island = bool(checked)
         self._write()
 
-    def _on_countdown(self, value: int) -> None:
+    def _on_countdown(self, _index: int) -> None:
         if self._loading:
             return
-        self.settings.countdown = int(value)
+        value = self.countdown_combo.currentData()
+        self.settings.countdown = int(value or 0)
         self._write()
+
+    # ---------------------------------------------------------------- folder
 
     def _browse(self) -> None:
         start = self.folder_edit.text() or str(self.settings.resolved_output_dir())
@@ -1410,93 +1864,120 @@ class SettingsPanel(surfaces.FloatingSurface):
         )
         if not chosen:
             return  # the user cancelled; nothing to report and nothing to change
+        problem = self._folder_problem(chosen)
+        if problem:
+            # Said here and the setting left alone. A folder that cannot be written to
+            # is not a setting, it is a recording that will fail at the worst moment -
+            # `recorder` finds out when ffmpeg has already started.
+            self.folder_problem.setText(problem)
+            self.folder_problem.setVisible(True)
+            return
         self.settings.output_dir = chosen
         self.folder_edit.setText(chosen)
         self.folder_edit.setToolTip(chosen)
+        self.folder_edit.setCursorPosition(0)
+        self.folder_problem.setVisible(False)
         self._write()
 
-    def _on_hotkey(self) -> None:
-        """Refuse an unusable combination in words, and leave the setting alone."""
-        if self._loading:
-            return
-        text = self.hotkey_edit.text().strip()
-        parsed = hotkeys_mod.parse_hotkey(text)
-        if parsed is None:
-            # Two templates rather than one with "an empty box" substituted into it:
-            # the piece that would be substituted is itself a translated phrase, and a
-            # stored message has to survive a language switch whole.
-            if text:
-                self._say_hotkey(
-                    "{shown} is not a hotkey. Use a modifier and a key, like "
-                    "Ctrl+Alt+R - Ctrl, Alt, Shift or Win plus a letter, a digit or "
-                    "F1-F24. Still using {hotkey}.",
-                    shown=text,
-                    hotkey=self.settings.hotkey,
-                )
-            else:
-                self._say_hotkey(
-                    "An empty box is not a hotkey. Use a modifier and a key, like "
-                    "Ctrl+Alt+R - Ctrl, Alt, Shift or Win plus a letter, a digit or "
-                    "F1-F24. Still using {hotkey}.",
-                    hotkey=self.settings.hotkey,
-                )
-            return
-        canonical = hotkeys_mod.format_hotkey(*parsed) or text
-        self._say_hotkey("")
-        if canonical != self.hotkey_edit.text():
-            was_blocked = self.hotkey_edit.blockSignals(True)
-            try:
-                self.hotkey_edit.setText(canonical)
-            finally:
-                self.hotkey_edit.blockSignals(was_blocked)
-        if canonical == self.settings.hotkey:
-            return  # nothing changed; do not wake the caller up to re-register it
-        self.settings.hotkey = canonical
-        self._write()
+    @staticmethod
+    def _folder_problem(folder: str) -> str:
+        """Why recordings cannot go there, or "" when they can.
 
-    def _say_hotkey(self, template: str, **values: str) -> None:
-        """Show a complaint about a hotkey box, or clear it with an empty template.
-
-        The English template and its values are kept rather than only the finished
-        sentence, so `retranslate` can say the same thing again instead of swallowing
-        a message the user has not read yet.
+        It writes a file and deletes it again, because that is the only question that
+        matters and the only one Windows answers truthfully: `os.access(W_OK)` reports
+        the read-only attribute and not the permissions, so it says yes to a folder
+        the recording will be refused by.
         """
-        self._hotkey_message = (template, dict(values)) if template else None
-        self._show_hotkey_message()
+        probe = Path(folder) / ".screenrec-write-test"
+        try:
+            probe.write_bytes(b"")
+        except OSError as exc:
+            return _("Recordings cannot be written there: {reason}").format(
+                reason=getattr(exc, "strerror", None) or exc
+            )
+        try:
+            probe.unlink()
+        except OSError:
+            # Written but not removed: the recording will work, and a stray empty file
+            # is not worth refusing the folder over.
+            pass
+        return ""
 
-    def _show_hotkey_message(self) -> None:
-        """Paint whatever complaint is current, in the language now in force."""
-        if self._hotkey_message is None:
-            self.hotkey_problem.setText("")
-            self.hotkey_problem.setVisible(False)
-        else:
-            template, values = self._hotkey_message
-            self.hotkey_problem.setText(_(template).format(**values))
-            self.hotkey_problem.setVisible(True)
-        self._fit()
+    def _open_folder(self) -> None:
+        """Show the folder in Explorer, and say so here if Windows refuses.
+
+        `shellops.open_folder` answers with a sentence rather than raising, and that
+        sentence belongs beside the field - a message box for "the folder is gone" is
+        more ceremony than the problem deserves.
+        """
+        problem = shellops.open_folder(self.settings.resolved_output_dir())
+        self.folder_problem.setText(problem)
+        self.folder_problem.setVisible(bool(problem))
 
     def _close(self) -> None:
         self.hide()
         self.closed.emit()
 
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        """Escape closes the window - unless a shortcut box is using it to cancel."""
+        if event.key() == QtCore.Qt.Key.Key_Escape:
+            for field in (self.hotkey_edit, self.hotkey_pause_edit,
+                          self.hotkey_draw_edit):
+                if field.is_armed():
+                    super().keyPressEvent(event)
+                    return
+            self._close()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     # ----------------------------------------------------------- derived UI
 
     def _update_enabled(self) -> None:
+        """Everything that is on, off, shown or hidden because of something else."""
         both = self.settings.mic_enabled and self.settings.system_audio_enabled
-        self.tracks_combo.setEnabled(both)
+        self.tracks_combo.setEnabled(both and not self._recording)
+        self.tracks_note.setText(
+            _("Two tracks need both the microphone and the system sound.")
+            if not both else ""
+        )
         self.tracks_note.setVisible(not both)
-        # Which camera, which corner and how big mean nothing with the camera off, and
-        # a live control under a switch that is off is an invitation to wonder why it
-        # does nothing.
+        self.mic_combo.setEnabled(self.settings.mic_enabled and not self._recording)
+        self.system_combo.setEnabled(
+            self.settings.system_audio_enabled and not self._recording
+        )
+
+        # Which camera, which corner and how big mean nothing with the camera off.
         on = bool(self.settings.webcam_enabled)
+        self.webcam_body.setVisible(on)
         for control in (self.webcam_combo, self.webcam_corner_combo,
                         self.webcam_size_combo, self.webcam_shape_combo,
                         self.webcam_res_combo):
-            control.setEnabled(on)
+            control.setEnabled(on and not self._recording)
+        self.camera_view.setEnabled(on and not self._recording)
+        self._refresh_camera_view()
+
+        # What a running take has already read and will not read again.
+        for control in (self.fps_combo, self.size_combo, self.profile_combo,
+                        self.quality_combo, self.preset_combo, self.webcam_switch,
+                        self.mic_switch, self.system_switch, self.cursor_switch,
+                        self.countdown_combo):
+            control.setEnabled(not self._recording)
+        self._write_status()
         self._update_estimate()
 
+    def _write_status(self) -> None:
+        """The footer's sentence. It is not always the same one."""
+        if self._recording:
+            self.status_label.setText(
+                _("A recording is running. The picture and sound settings will be "
+                  "used by the next one.")
+            )
+        else:
+            self.status_label.setText(_("Changes are saved as you make them."))
+
     def _update_estimate(self) -> None:
-        """Say what a minute costs, and admit that it is an estimate.
+        """Say what a minute costs, and admit which kind of figure it is.
 
         The per-minute figures in `config.PROFILES` were measured on a *busy* screen -
         scrolling coloured text - and a real desktop recording came in far under them, so
@@ -1508,8 +1989,8 @@ class SettingsPanel(surfaces.FloatingSurface):
         somebody else's number, shown as if it were theirs. `size_estimate` answers with
         this machine's own recordings once there are any and falls back to the same
         table until then, so the figure never gets worse; when it is a real measurement
-        the sentence says so, because "estimated" and "measured here" are not the same
-        claim and the user is entitled to know which they are reading.
+        the second line says so, because "estimated" and "measured here" are not the
+        same claim and the user is entitled to know which they are reading.
 
         The encoder is passed only once the probe has answered: before that there is
         nothing to look a measurement up by, and `_chosen_encoder` would answer for an
@@ -1523,71 +2004,41 @@ class SettingsPanel(surfaces.FloatingSurface):
             self._chosen_encoder(profile)
             if (profile is not None and self._encoders_known) else ""
         )
+        framerate = int(self.fps_combo.currentData() or self.settings.framerate or 60)
         estimate = storage_mod.size_estimate(
-            profile_key, level, width, height, self.fps_spin.value(),
-            encoder=encoder,
+            profile_key, level, width, height, framerate, encoder=encoder,
         )
         rate = estimate.mb_per_minute
         gigabytes = rate * 60 / 1000
+        self.estimate_label.setText(
+            _("≈ {rate} MB a minute at {width} × {height}").format(
+                rate=f"{rate:.0f}", width=width, height=height
+            )
+        )
         if estimate.measured:
-            self.estimate_label.setText(
-                _("About {rate} MB a minute at {width}×{height} ({gigabytes} GB an "
-                  "hour) - measured on this machine, from what {encoder} has already "
-                  "written.").format(
-                    rate=f"{rate:.0f}",
-                    width=width,
-                    height=height,
-                    gigabytes=f"{gigabytes:.1f}",
-                    encoder=estimate.encoder,
+            self.estimate_note.setText(
+                _("{gigabytes} GB an hour. Measured on this machine, from what "
+                  "{encoder} has already written.").format(
+                    gigabytes=f"{gigabytes:.1f}", encoder=estimate.encoder
                 )
             )
         else:
-            self.estimate_label.setText(
-                _("Estimated {rate} MB a minute at {width}×{height} ({gigabytes} GB an "
-                  "hour) on a busy screen - much less on a still one.").format(
-                    rate=f"{rate:.0f}",
-                    width=width,
-                    height=height,
-                    gigabytes=f"{gigabytes:.1f}",
-                )
+            self.estimate_note.setText(
+                _("{gigabytes} GB an hour on a busy screen - much less on a still "
+                  "one.").format(gigabytes=f"{gigabytes:.1f}")
             )
         self.profile_note.setText(_(profile.note) if profile else "")
         self._refresh_encoding()
-        self._fit()
-
-    def _fit(self) -> None:
-        """Grow or shrink to the content. The 4:4:4 note must never be truncated.
-
-        `sizeHint().height()` is the wrong figure here and it is wrong in both
-        directions. A `QLabel` with `wordWrap` reports a size hint for the width it
-        would *like*, not for the 360 px it is going to get, so at the 4:4:4 note it
-        asked for 796 px where the wrapped content needs 838 and the warning was clipped;
-        with wider system fonts it overshoots instead and leaves dead space under the
-        hotkey row. `totalHeightForWidth` is the only figure that asks the layout how
-        tall it is *at this width*, margins included.
-        """
-        layout = self.layout()
-        if layout is None:
-            return
-        width = self.width() or WIDTH
-        if layout.hasHeightForWidth():
-            wanted = layout.totalHeightForWidth(width)
-        else:
-            # No wrapping child in the tree - nothing to ask, so the hint is the answer.
-            wanted = layout.sizeHint().height()
-        wanted = max(wanted, layout.totalMinimumSize().height())
-        if wanted != self.height():
-            self.setFixedHeight(wanted)
 
     # -------------------------------------------------------- which encoder
 
     def set_encoders(
         self, results: Sequence[capabilities_mod.EncoderResult]
     ) -> None:
-        """Hand the panel what the encoder probe found on this machine.
+        """Hand the window what the encoder probe found on this machine.
 
         The application calls this with `Application.encoders`, next to
-        `set_capture_size`. Before it is called the panel shows nothing about encoding
+        `set_capture_size`. Before it is called the window shows nothing about encoding
         and offers every format: see the module docstring for why silence beats a guess.
 
         Handing it an empty list *is* an answer - "the probe ran and nothing works" -
@@ -1599,22 +2050,21 @@ class SettingsPanel(surfaces.FloatingSurface):
         self._update_enabled()
 
     def encoders(self) -> list[capabilities_mod.EncoderResult]:
-        """What the panel was told, so a caller need not keep a second copy."""
+        """What the window was told, so a caller need not keep a second copy."""
         return list(self._encoders)
 
     def _chosen_encoder(self, profile: config_mod.Profile) -> str:
         """The ffmpeg encoder this machine would really use for `profile`.
 
-        `capabilities.choose` is the one answer, and the panel asks it rather than
+        `capabilities.choose` is the one answer, and the window asks it rather than
         working anything out of its own: a second opinion here is a second chooser to
         keep in step with the recorder.
 
         `Settings.encoder_choice` stays the JSON-only escape hatch it is documented as -
-        there is no control for it on this panel, deliberately - but if somebody has
-        written a real encoder name into the file then that is what will be recorded
-        with, and this line has to say so instead of describing a choice nobody made.
-        Anything else in that field, "auto" and "" included, means "let the probe
-        decide".
+        there is no control for it here, deliberately - but if somebody has written a
+        real encoder name into the file then that is what will be recorded with, and
+        this line has to say so instead of describing a choice nobody made. Anything
+        else in that field, "auto" and "" included, means "let the probe decide".
         """
         wanted = getattr(self.settings, "encoder_choice", "auto")
         if isinstance(wanted, str) and encoders_mod.family_of(wanted):
@@ -1720,7 +2170,7 @@ class SettingsPanel(surfaces.FloatingSurface):
         """
         model = self.profile_combo.model()
         if not isinstance(model, QtGui.QStandardItemModel):
-            # A view this panel did not build. Nothing to disable, and guessing at
+            # A view this window did not build. Nothing to disable, and guessing at
             # another model's flags is how a list stops being selectable at all.
             return
         for index in range(self.profile_combo.count()):
@@ -1760,7 +2210,7 @@ class SettingsPanel(surfaces.FloatingSurface):
 
     def _set_details_text(self) -> None:
         """The expander's own caption. The triangle is not translated: it is a shape."""
-        arrow = "\u25be" if self.details_button.isChecked() else "\u25b8"
+        arrow = "▾" if self.details_button.isChecked() else "▸"
         self.details_button.setText(f"{arrow} {_('Details')}")
 
     def _fill_details(self) -> None:
@@ -1801,17 +2251,11 @@ class SettingsPanel(surfaces.FloatingSurface):
     def _on_details(self, shown: bool) -> None:
         self._set_details_text()
         self.details_box.setVisible(bool(shown) and self._encoders_known)
-        self._fit()
 
     # -------------------------------------------------------------- dragging
 
     def _in_header(self, point: QtCore.QPoint) -> bool:
-        """Whether `point` (in panel coordinates) is on the title row.
-
-        The band reaches the top of the panel, so the 12 px margin above the title is
-        draggable too - that is where the pointer lands when someone grabs the top of
-        the window.
-        """
+        """Whether `point` (in window coordinates) is on the title row."""
         return point.y() <= self.header.geometry().bottom()
 
     def mousePressEvent(self, event: QtGui.QMouseEvent) -> None:
@@ -1841,38 +2285,36 @@ class SettingsPanel(surfaces.FloatingSurface):
             return
         if self._drag.end():
             # Only a real drag is remembered. A press that did not travel is a click
-            # on the title, which means nothing and must not pin the panel in place.
+            # on the title, which means nothing and must not pin the window in place.
             self._dropped_at = (self.x(), self.y())
         event.accept()
 
     def hideEvent(self, event: QtGui.QHideEvent) -> None:
-        # Hidden mid-drag the panel never sees the release, and a half-finished drag
+        # Hidden mid-drag the window never sees the release, and a half-finished drag
         # would move it on the first mouse move after it came back.
         self._drag.cancel()
+        # A box left armed would hold the global hotkeys down for ever.
+        for field in (self.hotkey_edit, self.hotkey_pause_edit, self.hotkey_draw_edit):
+            field.disarm()
         super().hideEvent(event)
 
     def dropped_at(self) -> tuple[int, int] | None:
-        """Where the user dragged the panel to this session, or None."""
+        """Where the user dragged the window to this session, or None."""
         return self._dropped_at
 
     # -------------------------------------------------------------- placing
 
     def popup_near(self, widget: QtWidgets.QWidget) -> None:
-        """Show below `widget` if the panel fits there, otherwise above; always on screen.
+        """Show beside `widget`, wholly on a screen, and never taller than one.
 
-        Unlike every other surface in this interface, the panel activates itself: the
-        hotkey box and the two spin boxes are useless without the keyboard. See the
-        module docstring for why that is an exception and not a slip.
+        Unlike every other surface in this interface, this one activates itself: the
+        sidebar and the shortcut boxes are useless without the keyboard. See the module
+        docstring for why that is an exception and not a slip.
 
-        Once the panel has been dragged somewhere by hand, that is where it reopens -
-        moving it back under the gear would throw away what the user just did. It is
-        still clamped, because the screen it was dropped on may have been unplugged
-        since.
+        Once it has been dragged somewhere by hand, that is where it reopens - moving it
+        back under the gear would throw away what the user just did. It is still
+        clamped, because the screen it was dropped on may have been unplugged since.
         """
-        self._fit()
-        if self._dropped_at is not None:
-            self._show_at(*self._clamped(*self._dropped_at))
-            return
         anchor = widget.mapToGlobal(QtCore.QPoint(0, 0))
         anchor_rect = QtCore.QRect(anchor, widget.size())
         screen = QtGui.QGuiApplication.screenAt(anchor_rect.center())
@@ -1883,6 +2325,17 @@ class SettingsPanel(surfaces.FloatingSurface):
             if screen is not None
             else QtCore.QRect(0, 0, 1920, 1080)
         )
+        # A window bigger than the screen cannot be read at the edges and cannot be
+        # moved far enough to fix it. The page scrolls instead, and `FieldGrid` drops
+        # to one column if the width goes with it.
+        self.resize(
+            min(WIDTH, max(520, area.width() - 32)),
+            min(HEIGHT, max(360, area.height() - 48)),
+        )
+
+        if self._dropped_at is not None:
+            self._show_at(*self._clamped(*self._dropped_at))
+            return
 
         gap = 8
         width, height = self.width(), self.height()
@@ -1909,7 +2362,7 @@ class SettingsPanel(surfaces.FloatingSurface):
     def _clamped(self, x: int, y: int) -> tuple[int, int]:
         """A remembered position, pulled back onto a screen that still exists.
 
-        `ui.bar`'s clamp against `winapi.list_monitors()`, so a panel dropped on a
+        `ui.bar`'s clamp against `winapi.list_monitors()`, so a window dropped on a
         monitor that has since been unplugged comes back somewhere it can be reached.
         Only the remembered position goes through this: the anchored placement above
         is already measured against the `QScreen` the gear is on, including the task

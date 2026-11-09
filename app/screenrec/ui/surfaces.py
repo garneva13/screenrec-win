@@ -20,6 +20,7 @@ does not help.
 from __future__ import annotations
 
 import ctypes
+import weakref
 from ctypes import wintypes
 from types import ModuleType
 
@@ -76,6 +77,42 @@ def exclude_from_capture(widget: QtWidgets.QWidget, exclude: bool = True) -> boo
     if not user32.GetWindowDisplayAffinity(wintypes.HWND(handle), ctypes.byref(current)):
         return False
     return current.value == wanted
+
+
+#: Whether a take is running. Every floating surface is hidden from capture while it
+#: is, and from nothing while it is not: the flag hides a window from **every** capture
+#: on the machine, the Snipping Tool and Win+Shift+S included, so outside a recording it
+#: protects nothing and only stops the user photographing their own program. Found twice
+#: on 2026-11-08 - on the settings window, then on the bar.
+_recording = False
+
+#: Every live surface that wants hiding, weakly, so a closed window is forgotten.
+_surfaces: "weakref.WeakSet[QtWidgets.QWidget]" = weakref.WeakSet()
+
+
+def recording() -> bool:
+    """Whether the chrome is currently being kept out of a recording."""
+    return _recording
+
+
+def set_recording(value: bool) -> int:
+    """A take started or ended. Returns how many surfaces really took the change.
+
+    Called from `ui.app` at the two points that bracket a take. Surfaces shown later
+    pick the state up in `FloatingSurface.showEvent`, so a popover opened mid-recording
+    is hidden too.
+    """
+    global _recording
+    _recording = bool(value)
+    took = 0
+    for surface in list(_surfaces):
+        try:
+            if exclude_from_capture(surface, _recording):
+                took += 1
+        except RuntimeError:
+            # Its C++ side has gone since the set was built. Nothing to do.
+            continue
+    return took
 
 
 def _no_activate(widget: QtWidgets.QWidget) -> bool:
@@ -135,7 +172,10 @@ class FloatingSurface(QtWidgets.QWidget):
         super().showEvent(event)
         if not getattr(self, "_styled", False):
             self._styled = _no_activate(self)
-        if self.hide_from_capture and not getattr(self, "_hidden_from_capture", False):
+        if not self.hide_from_capture:
+            return
+        _surfaces.add(self)
+        if _recording and not getattr(self, "_hidden_from_capture", False):
             # False on Windows 10 before 2004: the surface will be in the recording,
             # and the caller is told so it can move it out of the way instead.
             self._hidden_from_capture = exclude_from_capture(self)
@@ -144,6 +184,16 @@ class FloatingSurface(QtWidgets.QWidget):
     def excluded_from_capture(self) -> bool:
         """Whether this surface really is invisible to a screen capture."""
         return bool(getattr(self, "_hidden_from_capture", False))
+
+    def hide_from_capture_now(self, hidden: bool = True) -> bool:
+        """Hide this one surface whatever the recording state, and report whether it took.
+
+        For a surface that is on screen *because* a recording is about to start - the
+        capture frame goes up before `set_recording` - and for the tests.
+        """
+        took = exclude_from_capture(self, hidden)
+        self._hidden_from_capture = took and hidden
+        return self._hidden_from_capture
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         painter = QtGui.QPainter(self)

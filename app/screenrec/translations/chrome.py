@@ -103,6 +103,10 @@ RUSSIAN: dict[str, str] = {
     # -- words the settings panel also uses, and words with two senses ---------
     "bar.microphone": "Микрофон",
     "bar.system_sound": "Звук системы",
+    # The bar's camera toggle. Its own key, like the two above: the settings window
+    # says "Camera" too, and a key may live in only one block.
+    "bar.camera": "Камера",
+    "Camera settings": "Настройки камеры",
     "bar.frame_rate": "Частота кадров",
     "source.screen": "Экран",
     "source.screen_number": "Экран {number}",

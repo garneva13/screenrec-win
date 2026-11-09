@@ -58,10 +58,15 @@ USABLE_FRAME_RATE = 24.0
 #: being enlarged. More than this buys nothing: the picture is a few hundred pixels.
 RESOLUTION_HEADROOM = 1.25
 
-SIZES: tuple[str, ...] = ("small", "medium", "large")
+SIZES: tuple[str, ...] = ("tiny", "small", "medium", "large")
 #: The picture's width as a fraction of the captured width, so it keeps its share of the
 #: frame whatever the screen is. A quarter of the width is already a lot of a lesson.
-SIZE_FRACTIONS: dict[str, float] = {"small": 0.12, "medium": 0.17, "large": 0.24}
+#: How wide the picture is as a fraction of the recorded area. "tiny" was added on
+#: 2026-11-09 because the camera was covering things that mattered: at 0.08 it is 205 px
+#: on a 2560-wide screen, which is a face you can recognise and little more.
+SIZE_FRACTIONS: dict[str, float] = {
+    "tiny": 0.08, "small": 0.12, "medium": 0.17, "large": 0.24,
+}
 
 #: How far the picture sits from the edges of the captured area, as a fraction of its
 #: width. Enough that it does not look stuck to the corner.

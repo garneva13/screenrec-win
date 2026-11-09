@@ -166,11 +166,12 @@
     </div>
     <div class="card">
       <h3>Your camera in a corner</h3>
-      <p>Four corners, three sizes, and a rounded rectangle, a circle or a plain
+      <p>Four corners, four sizes, and a rounded rectangle, a circle or a plain
       rectangle. The camera runs at a resolution that suits the little window rather
       than 1080p - chosen for you, or picked from its own list. It is drawn on the
       desktop, so the recording picks it up the way it picks up the click rings - and
-      you see it too while you record.</p>
+      you see it too while you record. If it ends up on top of something that matters,
+      one button on the bar takes it away without touching the recording.</p>
     </div>
     <div class="card">
       <h3>A smaller file</h3>
@@ -209,26 +210,28 @@
   one against the other by a frame or by 100&nbsp;ms until they line up.</p>
 
   <h2>Settings that say what they mean</h2>
-  <div class="split">
-    <div>
-      <p>No bitrates and no profile names. "Normal — H.265", and a sentence underneath
-      about what it will cost you:</p>
-      <p class="note">About 55 MB a minute at 1920×1080 (3.3 GB an hour) on a busy
-      screen — far less on a quiet one.</p>
-      <p>Once there are real recordings to go on, that figure stops being an estimate and
-      says <em>measured on this machine</em>. A format your machine cannot encode is
-      disabled, with the reason written next to it.</p>
-      <p>Interface in English or Russian, switchable while it runs.</p>
-    </div>
-    <div>
-      <img class="shot tall" src="images/recorder-settings.png"
-           alt="The settings panel: language, preset, video, audio, cursor, output folder and hotkeys">
-    </div>
-  </div>
+  <p>No bitrates and no profile names. "Normal — H.265", and a line underneath about
+  what it will cost you:</p>
+  <p class="note">≈ 98 MB a minute at 2560 × 1440 — 5.9 GB an hour on a busy screen,
+  much less on a still one.</p>
+  <p>Once there are real recordings to go on, that figure stops being an estimate and
+  says <em>measured on this machine</em>. A format your machine cannot encode is
+  disabled, with the reason written next to it.</p>
+  <img class="shot" src="images/recorder-settings.png"
+       alt="The settings window: a sidebar of five pages with Recording open, showing the profile, frame rate, resolution, format, quality, the size estimate and the output folder">
+  <p class="caption">Five pages, not one long column: Recording, Sound, Camera, Control
+  and General.</p>
+
+  <p>The camera page draws where the camera will sit, so you pick a corner by looking
+  at it rather than by reading four words.</p>
+  <img class="shot" src="images/recorder-camera.png"
+       alt="The camera page: a drawn screen with the camera block in the bottom right corner, and lists for position, size, shape and the camera's own resolution">
+
+  <p>Interface in English or Russian, switchable while it runs.</p>
 
   <h2>Installing</h2>
   <ol class="steps">
-    <li>Download <code>ScreenRec-0.1.0-setup.exe</code> from
+    <li>Download <code>ScreenRec-0.2.0-setup.exe</code> from
       <a href="https://github.com/garneva13/screenrec-win/releases">Releases</a> and run it.</li>
     <li>Windows will warn you — the installer is not code-signed yet. Click
       <strong>More info</strong>, then <strong>Run anyway</strong>. The release notes carry

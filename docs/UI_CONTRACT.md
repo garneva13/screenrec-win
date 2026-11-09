@@ -13,10 +13,16 @@ importance, and you had to read all of them to press one button. Recording is an
 not a configuration, so the new interface is built around the action:
 
 1. **The bar** — a small floating always-on-top strip. It is the application. Source
-   chip, device toggles, two quick settings, the record button, a gear.
+   chip, device toggles (microphone, system sound, camera, cursor), two quick settings,
+   the record button, a gear. The camera toggle is on the recording row as well: it is
+   the one setting worth changing mid-take, because the camera is a desktop window and
+   taking it away costs the recording nothing.
 2. **Popovers** — a floating surface above or below the bar, one per chip. The source
    picker, the device lists, the quality list.
-3. **The settings panel** — everything you change once a month, behind the gear.
+3. **The settings window** — everything you change once a month, behind the gear. A
+   sidebar of five pages (Recording, Sound, Camera, Control, General), the chosen page
+   beside it, and a footer that says what happens to a change. It was one column 1375 px
+   tall until 2026-11-08, which was taller than the screen it had to open on.
 4. **The capture frame** — a thin outline round whatever is being recorded.
 
 Nothing is modal. Nothing needs a window manager. The bar remembers where it was put and

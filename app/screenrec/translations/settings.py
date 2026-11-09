@@ -28,7 +28,7 @@ RUSSIAN: dict[str, str] = {
     "Frame rate": "Частота кадров",
     "Size": "Размер",
     # -- the camera -------------------------------------------------------
-    "Camera": "КАМЕРА",
+    "Camera": "Камера",
     "Camera in the corner": "Камера в углу",
     "The camera is drawn on the screen itself, so it reaches the recording "
     "the way the click rings do - and so you can see it too while you record.":
@@ -50,6 +50,7 @@ RUSSIAN: dict[str, str] = {
     "Top right": "Сверху справа",
     "Bottom left": "Снизу слева",
     "Bottom right": "Снизу справа",
+    "Tiny": "Крошечная",
     "Small": "Маленькая",
     "Medium": "Средняя",
     "Large": "Большая",
@@ -221,4 +222,101 @@ RUSSIAN: dict[str, str] = {
     "{name} · {vendor} — did not work: {reason}":
         "{name} · {vendor} — не заработал: {reason}",
     "no reason given": "причина не названа",
+
+    # ---------------------------------------------------------------------
+    # The window as it was rebuilt on 2026-11-08: a sidebar, five pages, and a
+    # footer. The headings above belong to the single column it replaced and are
+    # kept because a settings file is not the only thing that outlives a redesign.
+    # ---------------------------------------------------------------------
+    # "Settings" is the gear's tool tip and lives in the chrome block; the window's
+    # own title reads the same key from there.
+    "Done": "Готово",
+    # -- the sidebar, and each page's own two lines -------------------------
+    "Recording": "Запись",
+    "Video and where files are saved": "Видео и сохранение файлов",
+    "Sound": "Звук",
+    "What is recorded besides the picture": "Что записывается кроме картинки",
+    "A picture on top of the recording": "Изображение поверх записи",
+    "Control": "Управление",
+    "What is on the screen, and what starts it":
+        "Что видно на экране и чем это запускается",
+    "General": "Общие",
+    "The program itself": "Сама программа",
+    "About": "О программе",
+    "Project page": "Страница программы",
+    "Source code": "Исходный код",
+    "That link would not open: {url}": "Ссылка не открылась: {url}",
+    # -- group headings -----------------------------------------------------
+    "Video settings": "Параметры видео",
+    "Saving": "Сохранение",
+    "Where it sits": "Положение в кадре",
+    "While recording": "Во время записи",
+    "Timers": "Таймеры",
+    "Hotkeys": "Горячие клавиши",
+    # -- field captions -----------------------------------------------------
+    "Profile": "Профиль",
+    "Resolution": "Разрешение",
+    "Folder for recordings": "Папка для записей",
+    "Open the folder": "Открыть папку",
+    "Recordings cannot be written there: {reason}":
+        "Записи туда не сохранить: {reason}",
+    "Device": "Устройство",
+    "Source": "Источник",
+    "In the file": "В файле",
+    "Position": "Положение",
+    "Record the microphone": "Записывать микрофон",
+    "Record what the computer plays": "Записывать звук компьютера",
+    "Show the camera": "Показывать камеру",
+    "Start / stop recording": "Начать / остановить запись",
+    # -- the (i) buttons ----------------------------------------------------
+    "What this means": "Что это значит",
+    "The screen's own size, or scaled down while recording. A smaller file, "
+    "and a copy through system memory to make it.":
+        "Как на экране или с уменьшением прямо во время записи. Файл меньше, "
+        "но за это платится копией кадра через оперативную память.",
+    "The codec and what it keeps of the colour. H.265 is smaller, H.264 plays "
+    "everywhere, and 4:4:4 keeps text sharp at the cost of size.":
+        "Кодек и то, сколько он оставляет от цвета. H.265 меньше по размеру, "
+        "H.264 играется везде, 4:4:4 сохраняет резкость текста ценой размера.",
+    "How hard the encoder tries. It changes the size of the file far more "
+    "than it changes what you can see.":
+        "Насколько старается кодировщик. На размер файла это влияет гораздо "
+        "сильнее, чем на то, что видно глазом.",
+    "The size the camera itself runs at. The picture is a few hundred pixels "
+    "wide, so the biggest mode is waste - and on this camera it is also the "
+    "slowest.":
+        "В каком разрешении работает сама камера. Окошко шириной в несколько "
+        "сотен точек, поэтому самый большой режим — это трата впустую, а на "
+        "этой камере он ещё и самый медленный.",
+    # -- the timers ---------------------------------------------------------
+    # "{rate} fps" is the bar's own label and lives in the recorder block.
+    "No countdown": "Без отсчёта",
+    "{seconds} s": "{seconds} с",
+    "No limit": "Без ограничения",
+    "{minutes} min": "{minutes} мин",
+    # -- the shortcut boxes -------------------------------------------------
+    "Press a shortcut, Esc to cancel": "Нажмите сочетание, Esc — отмена",
+    "Click a box and press the keys. Esc leaves it as it was.":
+        "Щёлкните по полю и нажмите клавиши. Esc оставляет как было.",
+    "{shortcut} is already {name}. The shortcut is unchanged.":
+        "{shortcut} уже занято: {name}. Сочетание осталось прежним.",
+    "start and stop": "начать и остановить",
+    "pause and carry on": "пауза и продолжить",
+    "draw and work": "рисовать и работать",
+    # -- the camera diagram -------------------------------------------------
+    "Where the camera sits": "Где стоит камера",
+    # -- the footer ---------------------------------------------------------
+    "Changes are saved as you make them.": "Изменения сохраняются сразу.",
+    "A recording is running. The picture and sound settings will be used by "
+    "the next one.":
+        "Идёт запись. Настройки картинки и звука вступят в силу со следующей.",
+    # -- the estimate -------------------------------------------------------
+    "≈ {rate} MB a minute at {width} × {height}":
+        "≈ {rate} МБ в минуту при {width} × {height}",
+    "{gigabytes} GB an hour. Measured on this machine, from what {encoder} "
+    "has already written.":
+        "{gigabytes} ГБ в час. Измерено на этой машине по тому, что уже "
+        "записал {encoder}.",
+    "{gigabytes} GB an hour on a busy screen - much less on a still one.":
+        "{gigabytes} ГБ в час на активном экране — на спокойном намного меньше.",
 }

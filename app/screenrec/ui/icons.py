@@ -52,6 +52,8 @@ KINDS: tuple[str, ...] = (
     "help",
     "warning",
     "camera",
+    "keyboard",
+    "camera_off",
 )
 
 
@@ -310,6 +312,25 @@ def _shape(painter: QtGui.QPainter, kind: str, ink: QtGui.QColor, weight: float)
     if kind == "camera":
         painter.drawRoundedRect(QtCore.QRectF(3, 6.5, 18, 12), 2.5, 2.5)
         painter.drawEllipse(QtCore.QPointF(12, 12.5), 3.6, 3.6)
+        return True
+
+    if kind == "camera_off":
+        painter.drawRoundedRect(QtCore.QRectF(3, 6.5, 18, 12), 2.5, 2.5)
+        painter.drawEllipse(QtCore.QPointF(12, 12.5), 3.6, 3.6)
+        _strike(painter, ink, weight)
+        return True
+
+    if kind == "keyboard":
+        painter.drawRoundedRect(QtCore.QRectF(2.5, 6, 19, 12), 2.0, 2.0)
+        # Two rows of keys and a space bar. Dots rather than little rectangles: at the
+        # 18 px the sidebar draws this at, rectangles turn into one grey smear.
+        painter.setPen(_pen(ink, weight * 1.15))
+        for x in (6.0, 9.5, 13.0, 16.5):
+            painter.drawPoint(QtCore.QPointF(x, 10.0))
+        for x in (7.5, 11.0, 14.5):
+            painter.drawPoint(QtCore.QPointF(x, 13.0))
+        painter.setPen(_pen(ink, weight))
+        painter.drawLine(QtCore.QPointF(8.5, 15.6), QtCore.QPointF(15.5, 15.6))
         return True
 
     return False

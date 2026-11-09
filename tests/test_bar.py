@@ -742,3 +742,60 @@ class TestDrag(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheCameraButton(unittest.TestCase):
+    """It is on both rows, because it is the one toggle that means something in the
+    middle of a take."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = _app()
+
+    def setUp(self) -> None:
+        self.bar = _furnished()
+
+    def tearDown(self) -> None:
+        self.bar.deleteLater()
+
+    def test_both_rows_have_one(self) -> None:
+        self.assertIsNotNone(self.bar.camera_button)
+        self.assertIsNotNone(self.bar.camera_button_rec)
+
+    def test_either_one_reports_the_change(self) -> None:
+        for button in (self.bar.camera_button, self.bar.camera_button_rec):
+            with self.subTest(button=button):
+                self.bar.set_camera(False)
+                catcher = _Catch(self.bar.camera_toggled)
+                button.click()
+                self.assertEqual(catcher.count, 1)
+                self.assertEqual(catcher.calls, [(True,)])
+
+    def test_the_two_rows_never_disagree(self) -> None:
+        """Switching it off while recording must not leave the idle row claiming it is
+        on - the user would come back to a bar that lies about the setting."""
+        self.bar.set_camera(False)
+        self.bar.camera_button_rec.click()
+        self.assertTrue(self.bar.camera_button.is_on())
+        self.bar.camera_button.click()
+        self.assertFalse(self.bar.camera_button_rec.is_on())
+
+    def test_the_icon_says_which_state_it_is_in(self) -> None:
+        self.bar.set_camera(True)
+        self.assertEqual(self.bar.camera_button.kind, "camera")
+        self.bar.set_camera(False)
+        self.assertEqual(self.bar.camera_button.kind, "camera_off")
+
+    def test_set_toggles_carries_it(self) -> None:
+        self.bar.set_toggles(False, False, False, True)
+        self.assertTrue(self.bar.camera_button.is_on())
+        self.bar.set_toggles(False, False, False, False)
+        self.assertFalse(self.bar.camera_button.is_on())
+
+    def test_the_chevron_asks_for_the_device_list(self) -> None:
+        for button in (self.bar.camera_button, self.bar.camera_button_rec):
+            with self.subTest(button=button):
+                catcher = _Catch(self.bar.camera_menu_requested)
+                button.menu_requested.emit()
+                self.assertEqual(catcher.count, 1)
+

@@ -35,7 +35,7 @@ from .. import takes as takes_mod
 from .. import winapi
 from .. import i18n
 from ..i18n import _, pick
-from . import theme
+from . import surfaces, theme
 from .bar import Bar
 from .captureframe import CaptureFrame
 from .countdown import Countdown
@@ -436,6 +436,8 @@ class Application(QtCore.QObject):
         bar.mic_toggled.connect(self._mic_toggled)
         bar.system_toggled.connect(self._system_toggled)
         bar.clicks_toggled.connect(self._clicks_toggled)
+        bar.camera_toggled.connect(self._on_camera_toggled)
+        bar.camera_menu_requested.connect(lambda: self._device_menu("camera"))
         bar.mic_menu_requested.connect(lambda: self._device_menu("mic"))
         bar.system_menu_requested.connect(lambda: self._device_menu("system"))
         bar.fps_clicked.connect(self._fps_menu)
@@ -476,14 +478,13 @@ class Application(QtCore.QObject):
         self.auto_stop_timer.setSingleShot(True)
         self.auto_stop_timer.timeout.connect(self._auto_stop)
 
-    def _start_hotkeys(self) -> None:
-        from .. import hotkeys as hotkeys_mod
+    def _stop_hotkeys(self) -> None:
+        """Hand every registered combination back to Windows.
 
-        wanted = {
-            "record": (self.settings.hotkey or "Ctrl+Alt+R", self._hotkey_record.emit),
-            "pause": (self.settings.hotkey_pause, self._hotkey_pause.emit),
-            "annotate": (self.settings.hotkey_annotate, self._hotkey_annotate.emit),
-        }
+        Its own method because the settings window needs it: a shortcut registered
+        with `RegisterHotKey` never reaches any window, so a box waiting for a key
+        press would read nothing and the recording would start instead.
+        """
         for name, listener in list(self.hotkeys.items()):
             try:
                 listener.stop()
@@ -495,6 +496,23 @@ class Application(QtCore.QObject):
                     warn=True,
                 )
         self.hotkeys = {}
+
+    def _on_hotkey_capture(self, armed: bool) -> None:
+        """The settings window is reading a key press, or has finished."""
+        if armed:
+            self._stop_hotkeys()
+        else:
+            self._start_hotkeys()
+
+    def _start_hotkeys(self) -> None:
+        from .. import hotkeys as hotkeys_mod
+
+        wanted = {
+            "record": (self.settings.hotkey or "Ctrl+Alt+R", self._hotkey_record.emit),
+            "pause": (self.settings.hotkey_pause, self._hotkey_pause.emit),
+            "annotate": (self.settings.hotkey_annotate, self._hotkey_annotate.emit),
+        }
+        self._stop_hotkeys()
 
         for name, (text, slot) in wanted.items():
             if not text:
@@ -589,6 +607,7 @@ class Application(QtCore.QObject):
             self.settings.mic_enabled,
             self.settings.system_audio_enabled,
             self.settings.click_highlight,
+            self.settings.webcam_enabled,
         )
         profile = self.settings.encoding()
         self.bar.set_quick(
@@ -738,6 +757,29 @@ class Application(QtCore.QObject):
                 action.triggered.connect(
                     lambda _checked, m=mic: self._choose_mic(m)
                 )
+        elif which == "camera":
+            found = self._cameras()
+            if not found:
+                menu.addAction(_("No camera was found on this machine.")).setEnabled(
+                    False
+                )
+            else:
+                automatic = menu.addAction(_("Choose for me"))
+                automatic.setCheckable(True)
+                automatic.setChecked(not self.settings.webcam_device)
+                automatic.triggered.connect(lambda: self._choose_camera(""))
+            for name in found:
+                action = menu.addAction(name)
+                action.setCheckable(True)
+                action.setChecked(name == self.settings.webcam_device)
+                action.triggered.connect(
+                    lambda _checked, n=name: self._choose_camera(n)
+                )
+            menu.addSeparator()
+            settings_action = menu.addAction(_("Camera settings"))
+            settings_action.triggered.connect(
+                lambda: self._open_camera_settings()
+            )
         else:
             # The settings panel's own words for this device, by the same key.
             default = menu.addAction(_("Default playback device"))
@@ -753,6 +795,69 @@ class Application(QtCore.QObject):
                 )
         menu.exec(QtGui.QCursor.pos())
 
+    def _on_camera_toggled(self, on: bool) -> None:
+        """The camera button on either row.
+
+        **This one works in the middle of a take, and the other toggles do not.** The
+        camera is a window on the desktop, so taking it away stops it reaching the file
+        from that frame on and the recording carries on untouched; the microphone and
+        the system sound are ffmpeg inputs, fixed when it starts. The reason somebody
+        wants this is that the picture sometimes sits on top of the thing being
+        demonstrated.
+
+        Off is always obeyed. On, during a take, is attempted at once and may fail -
+        `_start_webcam` says why and leaves the button where the setting now is, so
+        "on" and "not showing" never look the same as "on and showing".
+        """
+        wanted = bool(on)
+        self.settings.webcam_enabled = wanted
+        self._save()
+        if self._is_recording():
+            if wanted:
+                self._start_webcam()
+                if self.webcam is None:
+                    # It did not open; `_start_webcam` has already said why.
+                    self.settings.webcam_enabled = False
+                    self._save()
+            else:
+                self._stop_webcam()
+        self._refresh_bar()
+
+    def _cameras(self) -> list[str]:
+        """The cameras Windows reports, by name, or an empty list.
+
+        Asked only when the menu is opened: `webcam` pulls in QtMultimedia and opening
+        the device is not free, so a program that has never shown the camera must not
+        pay for the list at start-up.
+        """
+        try:
+            from .. import webcam as webcam_mod
+
+            return [device.description() for device in webcam_mod.cameras()]
+        except Exception as exc:  # noqa: BLE001 - somebody else's hardware
+            self._say(
+                lambda: _("The camera list could not be read: {reason}").format(
+                    reason=exc
+                ),
+                warn=True,
+            )
+            return []
+
+    def _choose_camera(self, description: str) -> None:
+        """Pick a camera from the bar's menu, and switch to it mid-take if need be."""
+        self.settings.webcam_device = description
+        # A mode chosen for a different camera means nothing on this one.
+        self.settings.webcam_resolution = ""
+        self.settings.webcam_enabled = True
+        self._save()
+        if self._is_recording():
+            self._stop_webcam()
+            self._start_webcam()
+            if self.webcam is None:
+                self.settings.webcam_enabled = False
+                self._save()
+        self._refresh_bar()
+
     def _choose_mic(self, mic: audio_mod.MicDevice) -> None:
         self.settings.mic_device = mic.ffmpeg_id
         self.settings.mic_label = mic.name
@@ -767,6 +872,12 @@ class Application(QtCore.QObject):
         self._save()
         self._refresh_bar()
         self._start_meters()
+
+    def _open_camera_settings(self) -> None:
+        """The settings window, already on the Camera page."""
+        self.open_settings()
+        if self.panel is not None:
+            self.panel.show_page("camera")
 
     def _fps_menu(self) -> None:
         menu = QtWidgets.QMenu()
@@ -826,6 +937,7 @@ class Application(QtCore.QObject):
             self.panel = SettingsPanel(self.settings)
             self.panel.changed.connect(self._settings_changed)
             self.panel.closed.connect(lambda: None)
+            self.panel.hotkey_capture.connect(self._on_hotkey_capture)
         self.panel.refresh_devices(self.mics, self.loopbacks)
         width, height = self._capture_size()
         self.panel.set_capture_size(width, height)
@@ -843,6 +955,7 @@ class Application(QtCore.QObject):
         # is still being asked.
         if self._probed:
             self.panel.set_encoders(self.encoders)
+        self.panel.set_recording(self._is_recording())
         self.panel.popup_near(self.bar)
 
     def _settings_changed(self) -> None:
@@ -1346,6 +1459,13 @@ class Application(QtCore.QObject):
     def _really_start(self) -> None:
         if self.session is not None and self.session.active:
             return  # the ring and the tick can both arrive; starting twice must not happen
+        # Everything the program draws now goes out of the capture, and comes back
+        # into it when the take ends: `surfaces.set_recording`. Before the overlays go
+        # up, so a surface shown after this picks the state up on its own.
+        surfaces.set_recording(True)
+        if self.panel is not None:
+            # The gear is on the bar, so the window can be open when a take begins.
+            self.panel.set_recording(True)
         self._pending_start = False
         self.countdown.cancel()
         self.bar.set_countdown(0)
@@ -1799,6 +1919,13 @@ class Application(QtCore.QObject):
                 )
         self._stop_highlight()
         self._stop_webcam()
+        # The take is over, so the program's own windows can be photographed again
+        # and the settings' picture and sound rows go live. Here rather than in
+        # `stop_recording`, because every path that ends a take comes through this one -
+        # stop, discard, and both of their all-screens halves.
+        surfaces.set_recording(False)
+        if self.panel is not None:
+            self.panel.set_recording(False)
 
     def _start_webcam(self) -> None:
         """Put the camera in the corner of whatever is about to be recorded.

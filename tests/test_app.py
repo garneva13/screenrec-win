@@ -48,6 +48,7 @@ from PySide6 import QtCore, QtWidgets  # noqa: E402
 from screenrec import capabilities, config, encoders, recorder, storage, winapi  # noqa: E402
 from screenrec import multi as multi_module  # noqa: E402
 from screenrec.ui import app as app_module  # noqa: E402
+from screenrec.ui import surfaces  # noqa: E402
 from screenrec.ui import theme  # noqa: E402
 from screenrec.ui.bar import Bar  # noqa: E402
 
@@ -142,6 +143,18 @@ class _Controller:
     _really_start = app_module.Application._really_start
     _start_all_screens = app_module.Application._start_all_screens
     open_settings = app_module.Application.open_settings
+    # The settings window asks for the global hotkeys to be stood down while a
+    # shortcut box is reading a key press, and `open_settings` connects to it.
+    # The bar's camera button, which is the one toggle that works mid-take.
+    _on_camera_toggled = app_module.Application._on_camera_toggled
+    _choose_camera = app_module.Application._choose_camera
+    _start_webcam = app_module.Application._start_webcam
+    _stop_highlight = app_module.Application._stop_highlight
+    _stop_webcam = app_module.Application._stop_webcam
+    _webcam_area = app_module.Application._webcam_area
+    _on_hotkey_capture = app_module.Application._on_hotkey_capture
+    _start_hotkeys = app_module.Application._start_hotkeys
+    _stop_hotkeys = app_module.Application._stop_hotkeys
     quit = app_module.Application.quit
 
     def __init__(self, bar: Bar, settings: config.Settings,
@@ -189,6 +202,10 @@ class _Controller:
         self._takes_started = 0
         self._take_tag = ""
         self._auto_stop_left = 0
+        # The overlays `_hide_overlays` puts away. None of them is ever started here.
+        self.webcam = None
+        self.highlight = None
+        self.frames: list = []
 
     def open_source_picker(self) -> None:
         self.picker_opened += 1
@@ -1999,3 +2016,148 @@ class WhereToSaveTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheCameraCanBeTurnedOffMidTakeTest(ControllerTestCase):
+    """The camera is the one thing on the bar that can be changed while recording.
+
+    It is a window on the desktop, so taking it away stops it reaching the file from
+    that frame on and ffmpeg never notices; the microphone and the system sound are
+    ffmpeg inputs and are fixed when it starts. The reason anybody wants this is that
+    the picture sometimes sits on top of the thing being demonstrated.
+    """
+
+    class _FakeSession:
+        active = True
+
+    def _recording(self, **settings):
+        controller = self.controller(**settings)
+        controller.session = self._FakeSession()
+        return controller
+
+    def test_turning_it_off_while_recording_takes_the_picture_away(self) -> None:
+        controller = self._recording(webcam_enabled=True)
+        stopped: list[int] = []
+        with mock.patch.object(
+            type(controller), "_stop_webcam", lambda self: stopped.append(1)
+        ):
+            controller._on_camera_toggled(False)
+        self.assertEqual(stopped, [1])
+        self.assertFalse(controller.settings.webcam_enabled)
+
+    def test_turning_it_on_while_recording_puts_it_up_at_once(self) -> None:
+        controller = self._recording(webcam_enabled=False)
+        started: list[int] = []
+
+        def fake_start(self) -> None:
+            started.append(1)
+            self.webcam = object()  # it opened
+
+        with mock.patch.object(type(controller), "_start_webcam", fake_start):
+            controller._on_camera_toggled(True)
+        self.assertEqual(started, [1])
+        self.assertTrue(controller.settings.webcam_enabled)
+
+    def test_a_camera_that_will_not_open_puts_the_setting_back(self) -> None:
+        """"On" and "not showing" must not look the same as "on and showing"."""
+        controller = self._recording(webcam_enabled=False)
+
+        def fake_start(self) -> None:
+            self.webcam = None  # it did not open; `_start_webcam` has said why
+
+        with mock.patch.object(type(controller), "_start_webcam", fake_start):
+            controller._on_camera_toggled(True)
+        self.assertFalse(controller.settings.webcam_enabled)
+        self.assertFalse(self.bar.camera_button.is_on())
+
+    def test_toggling_it_while_idle_only_writes_the_setting(self) -> None:
+        """Turning the camera on outside a take must not light the webcam up."""
+        controller = self.controller(webcam_enabled=False)
+        controller.session = None
+        touched: list[str] = []
+        with mock.patch.object(
+            type(controller), "_start_webcam", lambda self: touched.append("start")
+        ), mock.patch.object(
+            type(controller), "_stop_webcam", lambda self: touched.append("stop")
+        ):
+            controller._on_camera_toggled(True)
+            controller._on_camera_toggled(False)
+        self.assertEqual(touched, [])
+        self.assertFalse(controller.settings.webcam_enabled)
+
+    def test_the_bar_shows_what_the_setting_says(self) -> None:
+        controller = self.controller(webcam_enabled=True)
+        controller._refresh_bar()
+        self.assertTrue(self.bar.camera_button.is_on())
+        controller.settings.webcam_enabled = False
+        controller._refresh_bar()
+        self.assertFalse(self.bar.camera_button.is_on())
+
+    def test_choosing_a_camera_turns_it_on_and_forgets_the_old_mode(self) -> None:
+        """A mode picked for one camera means nothing on another."""
+        controller = self.controller(
+            webcam_enabled=False, webcam_device="Old", webcam_resolution="1920x1080"
+        )
+        controller.session = None
+        controller._choose_camera("HD Pro Webcam C922")
+        self.assertEqual(controller.settings.webcam_device, "HD Pro Webcam C922")
+        self.assertEqual(controller.settings.webcam_resolution, "")
+        self.assertTrue(controller.settings.webcam_enabled)
+
+    def test_choosing_one_mid_take_restarts_the_picture(self) -> None:
+        controller = self._recording(webcam_enabled=True)
+        order: list[str] = []
+
+        def fake_start(self) -> None:
+            order.append("start")
+            self.webcam = object()
+
+        with mock.patch.object(
+            type(controller), "_stop_webcam", lambda self: order.append("stop")
+        ), mock.patch.object(type(controller), "_start_webcam", fake_start):
+            controller._choose_camera("Integrated Camera")
+        self.assertEqual(order, ["stop", "start"])
+
+
+class TheChromeIsHiddenOnlyWhileRecordingTest(ControllerTestCase):
+    """WDA_EXCLUDEFROMCAPTURE hides a window from *every* capture on the machine, the
+    Snipping Tool included. Outside a take that protects nothing and only stops the
+    user photographing their own program - which is how it was found, twice."""
+
+    def tearDown(self) -> None:
+        surfaces.set_recording(False)
+        super().tearDown()
+
+    def test_a_take_hides_it_and_the_end_of_one_gives_it_back(self) -> None:
+        """`_Controller` counts `_hide_overlays` instead of running it, so the second
+        half is driven through the real method - which is the one under test."""
+        controller = self.controller()
+        seen: list[bool] = []
+        with mock.patch.object(
+            surfaces, "set_recording", lambda value: seen.append(bool(value)) or 0
+        ):
+            controller.session = None
+            with mock.patch.object(recorder, "RecordingSession", _NoSession):
+                controller._really_start()
+            self.assertEqual(seen, [True], "a take must hide the chrome")
+            app_module.Application._hide_overlays(controller)
+        self.assertEqual(seen, [True, False])
+
+    def test_the_flag_is_off_while_nothing_is_recorded(self) -> None:
+        surfaces.set_recording(False)
+        self.assertFalse(surfaces.recording())
+        surfaces.set_recording(True)
+        self.assertTrue(surfaces.recording())
+
+
+class _NoSession:
+    """A session that starts and reports nothing, for the two lines around it."""
+
+    active = True
+
+    def __init__(self, *args, **kwargs) -> None:
+        pass
+
+    def start(self, on_progress=None, loopback_device=-1) -> str:
+        return ""
+

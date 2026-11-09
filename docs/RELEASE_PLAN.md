@@ -26,8 +26,9 @@ What exists now, and what was measured rather than assumed:
 | `ScreenRec.spec` | two executables, one `onedir` folder, WebEngine and the rest excluded |
 | `tools/make_icons.py` | both `.ico` files rendered from the app's own drawing code |
 | `tools/build_release.py` | icons, PyInstaller, ffmpeg, licences, and a report |
-| `packaging/ScreenRec.iss` | the installer: per-user, no administrator |
+| `packaging/ScreenRec.iss` | the installer. It says per-user below because that was the plan; what shipped asks for administrator and installs into `C:\Program Files` for everyone, after the user asked for it |
 | `dist/ScreenRec-0.1.0-setup.exe` | **131 MB**, from 462 MB installed |
+| `dist/ScreenRec-0.2.0-setup.exe` | **133 MB**, from 491 MB installed - the camera brought QtMultimedia in |
 
 **Proven on this machine, in this order:**
 
@@ -209,9 +210,11 @@ at all. So: never `--add-binary` ffmpeg into `_internal`. Copy the folder.
    user name. Record with system sound, stop on the hotkey, open the result in the player.
    Three actions, and they cover every trap above. No unit test reaches them.
 
-Release assets for `v0.1.0`: `ScreenRec-0.1.0-win64.zip`, the FFmpeg source archive for
-the pinned commit, and `SHA256SUMS.txt`. The release text carries the hashes, the GPL
-paragraph pointing at the source asset, and an honest paragraph about SmartScreen.
+Release assets, as planned here: a zip, the FFmpeg source archive for the pinned commit,
+and `SHA256SUMS.txt`. **What was actually published** for `v0.1.0` and `v0.2.0` is the
+installer in place of the zip - see the first table - with the same two other assets.
+The release text carries the hashes, the GPL paragraph pointing at the source asset, and
+an honest paragraph about SmartScreen.
 
 ---
 

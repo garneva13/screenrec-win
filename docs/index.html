@@ -130,7 +130,7 @@
   </aside>
 
   <img class="shot bar" src="images/recorder-idle.png"
-       alt="The ScreenRec bar: the screen to record, microphone and system sound, frame rate, format, folder and hotkey">
+       alt="The ScreenRec bar: the screen to record, microphone, system sound and camera, the pointer, frame rate, format, folder and hotkey">
 
   <h2>While it records, it gets out of the way</h2>
   <p>The bar shrinks to a clock, the size of the file so far, and the frame rate it is
@@ -270,7 +270,7 @@
     encoders, written from their documented options and guarded so that an unsupported
     path falls back to the processor rather than failing. But the author has one NVIDIA
     card and no way to run the others. If your machine takes the processor path when it
-    should not, that is worth a bug report — the settings panel will tell you which
+    should not, that is worth a bug report — the settings will tell you which
     encoder it chose and why.</p>
   </details>
   <details>
@@ -287,10 +287,19 @@
     apart two screens started, so a multi-screen take has to be lined up by hand there.</p>
   </details>
   <details>
-    <summary>Three or more monitors, and display scaling, are unverified</summary>
+    <summary>The camera is on your screen too, not only in the file</summary>
+    <p>It is drawn on the desktop, which is how it reaches the recording without costing
+    the capture anything and how it can be taken away mid-take. The price is that it is
+    a window: you see it while you record, and so does anyone looking over your shoulder
+    or sharing your screen in a call.</p>
+  </details>
+  <details>
+    <summary>Three or more monitors are unverified, and so is most of the scaling</summary>
     <p>Two monitors are tested thoroughly, including one unplugged mid-playback. Three
-    screens work in the code and in the tests but have never been run on real hardware,
-    and neither has 125 %, 150 % or 200 % display scaling.</p>
+    screens work in the code and in the tests but have never been run on real hardware.
+    Display scaling: the settings window was checked at 125 %, 150 % and 200 %, where it
+    scrolls rather than clipping — the rest of the interface has only ever run at
+    100 %, because both of the author's screens are.</p>
   </details>
   <details>
     <summary>Windows only</summary>

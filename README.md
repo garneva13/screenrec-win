@@ -66,6 +66,27 @@ drawings reach the file; the toolbar never does:
 
 ![Drawing over the screen](docs/images/annotate-over-screen.png)
 
+## Your camera in a corner
+
+Four corners, four sizes, and a rounded rectangle, a circle or a plain rectangle. The
+camera is **drawn on the desktop** rather than mixed in by the encoder, and two things
+follow from that: the recording picks it up the way it picks up the click rings, and you
+can see it on your own screen while you record.
+
+A third thing follows too, and it is the useful one. The camera can be switched off
+**in the middle of a recording**, from a button on the bar, when it ends up on top of
+whatever you are demonstrating — the recording carries on untouched, because nothing
+about ffmpeg's inputs has changed. Measured on a real take, with a flat colour in the
+overlay instead of a camera: before the switch, 11,745 of 11,890 sampled pixels in the
+camera's rectangle were that colour; after it, 0.
+
+The camera also runs at a resolution that suits the little window rather than at 1080p —
+chosen for you, or picked from its own list, which says what frame rate each mode can
+really manage. That matters more than it sounds: on the camera this was written against,
+the two largest modes run at **2 frames a second**, so "the biggest" is a trap.
+
+![The camera page of the settings](docs/images/recorder-camera.png)
+
 ## The player
 
 A recording of two monitors is two files, not one picture with both screens squashed
@@ -115,8 +136,14 @@ So the window offers the trade-off by name rather than a codec list, and shows w
 minute will cost for the screen you are about to capture. Once there are real recordings
 to go on, that figure stops being an estimate and says "measured on this machine":
 
-![Settings](docs/images/recorder-settings.png) The full table, and the three
-ways this benchmark lied before it was fixed, are in `docs/HANDOVER.md`.
+![Settings](docs/images/recorder-settings.png)
+
+The settings are five pages behind the gear — Recording, Sound, Camera, Control,
+General. They were one column 1375 px tall until it turned out to be taller than the
+screen it had to open on.
+
+The full table, and the three ways this benchmark lied before it was fixed, are in
+`docs/HANDOVER.md`.
 
 Two hardware facts, both measured: `av1_nvenc` is listed by this ffmpeg but the RTX 3070
 Ti cannot use it (Ampere has no AV1 encoder), and 4:4:4 cannot stay on the GPU - there is
@@ -151,8 +178,9 @@ app\run_player.pyw        the player
 app\screenrec\           paths, winapi, config, audio, recorder, encoders,
                          capabilities, multi, hotkeys, clicks, overlay, webcam,
                          takes, storage, i18n
-app\screenrec\ui\        theme, surfaces, bar, settings_panel, sources,
-                         thumbnails, countdown, captureframe, tray, icons, app
+app\screenrec\ui\        theme, surfaces, bar, settings_panel,
+                         settings_widgets, sources, thumbnails, countdown,
+                         captureframe, tray, icons, app
 app\screenrec\player\    engine, window, stage, panes, chooser, layouts,
                          library, open
 app\screenrec\annotate\  model, canvas, toolbar, textbox

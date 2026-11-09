@@ -737,8 +737,8 @@ in this code.
 
 ### Where both programs stand
 
-    1961 unit tests                     OK (2 skipped)
-    tools/static_review.py              78 files, nothing found
+    2105 unit tests                     OK (2 skipped)
+    tools/static_review.py              83 files, nothing found
     tools/check_translations.py         every translatable string has Russian
     tools/verify_layouts.py             23 of 23
     tools/verify_sources.py             39 of 39

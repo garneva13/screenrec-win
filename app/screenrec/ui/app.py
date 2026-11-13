@@ -26,6 +26,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .. import audio as audio_mod
 from .. import capabilities
+from .. import endpoints as endpoints_mod
 from .. import config as config_mod
 from .. import encoders as encoders_mod
 from .. import levels as levels_mod
@@ -45,6 +46,16 @@ from .sources import SourcePicker
 
 TICK_MS = 200
 LEVEL_MS = 50
+#: How long the system-sound track may be pure silence before the bar says so, in
+#: seconds. Long enough that a pause in a conversation cannot trigger it, short enough
+#: that the answer arrives while the take can still be restarted - the failure this is
+#: for cost a whole call on 2026-11-13, and was only reported once it had ended.
+SILENT_SYSTEM_SECONDS = 25.0
+#: How often the playback endpoints are asked where the sound is going, in
+#: milliseconds. A sweep of the default's name and every endpoint's peak was measured
+#: at 1.6 ms on 2026-11-13, so this is not about cost - it is about not moving a
+#: recording's capture device on a momentary answer.
+ENDPOINT_MS = 2000
 #: How long one queued status line holds the bar before the next takes its turn.
 #:
 #: Not a measurement - a chosen reading pause. What *was* measured, on 2026-11-05 with
@@ -168,6 +179,25 @@ class Application(QtCore.QObject):
         #: Milliseconds of "stop after N minutes" still owed when the pause began -
         #: see `_hold_auto_stop`.
         self._auto_stop_left = 0
+        #: Said once per take; see `_watch_system_sound`.
+        self._silence_warned = False
+        #: The playback endpoint being captured and metered, by its Windows name.
+        #: Empty until something has been metered, so the first sweep after that
+        #: cannot announce a change that nobody made.
+        self._capturing_name = ""
+        #: The endpoint last pointed at by `_advise_on_silence`, so one wrong choice
+        #: is reported once and not every two seconds.
+        self._advised_name = ""
+        #: Asks Windows which device is playing. None where COM is not available, and
+        #: then every one of these features is simply absent - see `endpoints.py`.
+        #: **Before `_start_meters`**, which reads it: it was built at the top of a
+        #: take instead, and the program died on its first start-up.
+        self.endpoints = (
+            endpoints_mod.Endpoints() if endpoints_mod.available() else None
+        )
+        if self.endpoints is not None and self.endpoints.problem:
+            print(f"app: {self.endpoints.problem} Playback devices will not be followed.")
+            self.endpoints = None
 
         self.bar = Bar()
         self.picker: SourcePicker | None = None
@@ -469,6 +499,10 @@ class Application(QtCore.QObject):
         self.level_timer = QtCore.QTimer(self)
         self.level_timer.setInterval(LEVEL_MS)
         self.level_timer.timeout.connect(self._tick_levels)
+
+        self.endpoint_timer = QtCore.QTimer(self)
+        self.endpoint_timer.setInterval(ENDPOINT_MS)
+        self.endpoint_timer.timeout.connect(self._tick_endpoints)
 
         self.countdown_timer = QtCore.QTimer(self)
         self.countdown_timer.setInterval(1000)
@@ -781,13 +815,14 @@ class Application(QtCore.QObject):
                 lambda: self._open_camera_settings()
             )
         else:
-            # The settings panel's own words for this device, by the same key.
-            default = menu.addAction(_("Default playback device"))
+            # The settings panel's own words for this device, by the same keys - and
+            # the same reason for naming the default: see `_default_loopback_label`.
+            default = menu.addAction(self._default_loopback_label())
             default.setCheckable(True)
             default.setChecked(self.settings.system_audio_device < 0)
             default.triggered.connect(lambda: self._choose_loopback(-1))
             for device in self.loopbacks:
-                action = menu.addAction(device.name)
+                action = menu.addAction(device.label)
                 action.setCheckable(True)
                 action.setChecked(device.index == self.settings.system_audio_device)
                 action.triggered.connect(
@@ -986,21 +1021,161 @@ class Application(QtCore.QObject):
         )
         for note in notes:
             self._say(note, warn=True)
+        self._capturing_name = self._loopback_name()
         if self.settings.mic_enabled or self.settings.system_audio_enabled:
             self.level_timer.start()
         else:
             self.level_timer.stop()
             self.bar.set_mic_level(0.0)
+            self.bar.set_system_level(0.0)
+        if self.settings.system_audio_enabled and self.endpoints is not None:
+            self.endpoint_timer.start()
+        else:
+            self.endpoint_timer.stop()
+
+    def _default_loopback_label(self) -> str:
+        """"Default playback device", and which one of them it is at the moment."""
+        plain = _("Default playback device")
+        try:
+            index = audio_mod.default_loopback_index()
+        except Exception:  # noqa: BLE001 - somebody else's audio stack
+            return plain
+        for device in self.loopbacks:
+            if device.index == index:
+                return _("Default playback device ({name})").format(name=device.label)
+        return plain
 
     def _loopback_index(self) -> int:
+        """The endpoint to capture: the chosen one, or whatever Windows is using.
+
+        The default is resolved by **name** through `endpoints`, and only falls back to
+        PortAudio's own idea of the default. The two can disagree, and PortAudio's
+        answer costs 17 ms and a start-stop of PortAudio underneath a running capture -
+        measured on 2026-11-13 against 1.3 ms for the name.
+        """
         if self.settings.system_audio_device >= 0:
             return self.settings.system_audio_device
+        if self.endpoints is not None:
+            index = self._loopback_index_named(self.endpoints.default_name())
+            if index >= 0:
+                return index
         return audio_mod.default_loopback_index()
 
-    def _tick_levels(self) -> None:
-        self.bar.set_mic_level(
-            max(self.meters.mic_level(), self.meters.system_level())
+    def _loopback_index_named(self, name: str) -> int:
+        """The PortAudio index of the endpoint Windows calls `name`, or -1.
+
+        Matched against the **live** device list. PortAudio enumerates once, when it is
+        initialised, and the recording and the meters hold it open for their whole
+        lives - so a device that appeared after that is not in the list and cannot be
+        captured until the next time PortAudio is started. That is a real limit and the
+        caller is told about it by the -1 rather than being given a wrong index.
+        """
+        if not name:
+            return -1
+        try:
+            for device in audio_mod.list_loopback_devices():
+                if device.label == name:
+                    return device.index
+        except Exception:  # noqa: BLE001 - somebody else's audio stack
+            return -1
+        return -1
+
+    def _loopback_name(self) -> str:
+        """The Windows name of the endpoint currently being captured, or ""."""
+        index = (
+            self.settings.system_audio_device
+            if self.settings.system_audio_device >= 0
+            else self._loopback_index()
         )
+        if index < 0:
+            return ""
+        try:
+            for device in audio_mod.list_loopback_devices():
+                if device.index == index:
+                    return device.label
+        except Exception:  # noqa: BLE001
+            return ""
+        return ""
+
+    # ------------------------------------------------- where the sound goes
+
+    def _tick_endpoints(self) -> None:
+        """Every `ENDPOINT_MS`: is the sound still going where we are recording?"""
+        if self.endpoints is None or not self.settings.system_audio_enabled:
+            return
+        if self.settings.system_audio_device < 0:
+            self._follow_default()
+        else:
+            self._advise_on_silence()
+
+    def _follow_default(self) -> None:
+        """Move the capture to whatever Windows is now using for playback.
+
+        Only when the user asked for "the default" - a named device is a decision and
+        is never moved underneath them. The recording is not interrupted:
+        `LoopbackFeeder.switch_to` reopens the capture stream and leaves the pipe
+        alone, and the silence padding covers the gap.
+        """
+        wanted = self.endpoints.default_name()
+        if not wanted or wanted == self._capturing_name:
+            return
+        index = self._loopback_index_named(wanted)
+        if index < 0:
+            # It is a device PortAudio has not enumerated - plugged in after it
+            # started. Nothing can be captured from it until the next launch, and
+            # saying so beats recording the old one in silence.
+            self.endpoints.refresh()
+            self._say(
+                lambda name=wanted: _(
+                    "Sound moved to “{name}”, which this recording cannot follow. "
+                    "Restart ScreenRec to record it."
+                ).format(name=name),
+                warn=True,
+            )
+            self._capturing_name = wanted
+            return
+        was = self._capturing_name
+        self._capturing_name = wanted
+        feeder = getattr(getattr(self.session, "recorder", None), "feeder", None)
+        moved = feeder.switch_to(index) if feeder is not None else False
+        self._start_meters()
+        # `_start_meters` re-reads the name; keep the one just decided on.
+        self._capturing_name = wanted
+        if was and moved:
+            self._say(
+                lambda name=wanted: _(
+                    "Sound moved to “{name}”; the recording moved with it."
+                ).format(name=name)
+            )
+
+    def _advise_on_silence(self) -> None:
+        """A named device is silent while another one is playing. Say so, once.
+
+        Said only while recording. Outside a take the two meters on the bar show the
+        same thing without a sentence, and a bar that comments on every sound the
+        machine makes is a bar nobody reads.
+        """
+        if not self._is_recording():
+            return
+        chosen = self._loopback_name()
+        peaks = self.endpoints.peaks()
+        if not chosen or peaks.get(chosen, 0.0) >= endpoints_mod.AUDIBLE_PEAK:
+            self._advised_name = ""
+            return
+        loud, _peak = self.endpoints.loudest(ignoring=chosen)
+        if not loud or loud == self._advised_name:
+            return
+        self._advised_name = loud
+        self._say(
+            lambda where=loud, here=chosen: _(
+                "The sound is going to “{where}”, but “{here}” is being recorded."
+            ).format(where=where, here=here),
+            warn=True,
+        )
+
+    def _tick_levels(self) -> None:
+        self.bar.set_mic_level(self.meters.mic_level())
+        self.bar.set_system_level(self.meters.system_level())
 
     # ------------------------------------------------------------ recording
 
@@ -1470,6 +1645,10 @@ class Application(QtCore.QObject):
         self.countdown.cancel()
         self.bar.set_countdown(0)
         self._space_warned = False
+        self._silence_warned = False
+        # A take gets its own chance to report a misrouted device: the one before it
+        # may have been told about a different one.
+        self._advised_name = ""
         self._pending_note = None
         # One take, one small-frame sentence. Until 2026-11-05 `_note_small_frame`
         # shared `_note_encoder`'s guard, which is cleared only in `__init__` and after
@@ -1478,6 +1657,7 @@ class Application(QtCore.QObject):
         # smaller than hevc_nvenc will encode - recording it on the processor instead."
         # and take two said nothing at all, while being just as much on the processor.
         self._frame_note = ""
+        self._silence_warned = False
         self._auto_stop_left = 0
         # Whatever was still waiting its turn belongs to the take that ended. The line
         # the user just asked for shows now, not behind a queue.
@@ -1851,6 +2031,32 @@ class Application(QtCore.QObject):
         )
         self.tray.set_elapsed(progress.seconds, progress.size_bytes / 1e6)
         self._watch_space()
+        self._watch_system_sound(session)
+
+    def _watch_system_sound(self, session) -> None:
+        """Say, once, if the system-sound track has been silence for long enough.
+
+        The feeder's own counters, not the level meter: these are what is actually
+        going into the file, and a second opinion from a second device is a second
+        thing to keep in step. `audible_frames` is zero both when the endpoint produces
+        nothing and when it produces digital silence - which is what recording the
+        wrong playback device sounds like, and is the case that was missed.
+        """
+        if self._silence_warned or not self.settings.system_audio_enabled:
+            return
+        feeder = getattr(getattr(session, "recorder", None), "feeder", None)
+        if feeder is None or feeder.error:
+            return  # a failure of its own; `_feeder_note` reports that one
+        if feeder.seconds_written < SILENT_SYSTEM_SECONDS or feeder.audible_frames:
+            return
+        self._silence_warned = True
+        self._say(
+            lambda: _(
+                "No system sound has arrived yet. Check which playback device is "
+                "being recorded - the recording is otherwise fine."
+            ),
+            warn=True,
+        )
 
     def _watch_space(self) -> None:
         if self._space_warned:

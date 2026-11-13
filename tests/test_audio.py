@@ -8,13 +8,15 @@ interpreter.
 """
 from __future__ import annotations
 
+import array
+import math
 import sys
 import threading
 import time
 import types
 import unittest
 
-from screenrec import levels, portaudio
+from screenrec import audio, levels, portaudio
 from screenrec.audio import CHANNELS, SAMPLE_RATE, MicDevice, parse_dshow_devices
 
 # Shaped exactly like a real capture -
@@ -421,3 +423,93 @@ def _eventually(predicate, timeout: float) -> bool:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SilenceIsNotTheSameAsNothingTest(unittest.TestCase):
+    """A track can be full of real, flowing, perfectly silent audio.
+
+    That is what recording the wrong playback endpoint sounds like, and it cost a whole
+    recorded call on 2026-11-13: frames arrived, so the only check there was -
+    `frames_written == 0` - said the recording was fine.
+
+    What counts as sound is **swing, not level**. Measured on the author's machine the
+    same day: with nothing playing, the headphone endpoint's loopback delivers a steady
+    -8 to -10, because the driver never writes a true zero, while Windows' own meter for
+    it reads 0.000. The first version of this used a level threshold of 8 and called
+    that silence sound - on the one device the user actually records.
+    """
+
+    @staticmethod
+    def _flat(left: int, right: int, frames: int = 480) -> bytes:
+        """A block that does not move: digital silence, or a driver's DC offset."""
+        block = array.array("h")
+        for _ in range(frames):
+            block.append(left)
+            block.append(right)
+        return block.tobytes()
+
+    @staticmethod
+    def _tone(amplitude: int, frames: int = 480, left: bool = True,
+              right: bool = True) -> bytes:
+        block = array.array("h")
+        for index in range(frames):
+            value = int(amplitude * math.sin(2 * math.pi * 440 * index / 48000))
+            block.append(value if left else 0)
+            block.append(value if right else 0)
+        return block.tobytes()
+
+    def test_digital_silence_carries_nothing(self) -> None:
+        self.assertFalse(audio._has_sound(self._flat(0, 0)))
+
+    def test_a_driver_that_never_writes_zero_is_still_silent(self) -> None:
+        """The measured case: a steady -9 on both channels, nothing playing."""
+        self.assertFalse(audio._has_sound(self._flat(-9, -9)))
+        self.assertFalse(audio._has_sound(self._flat(-10, -8)))
+
+    def test_a_loud_constant_is_not_sound_either(self) -> None:
+        """A level that never changes is an offset, whatever its size."""
+        self.assertFalse(audio._has_sound(self._flat(9000, 9000)))
+
+    def test_quiet_speech_is_sound(self) -> None:
+        self.assertTrue(audio._has_sound(self._tone(300)))
+
+    def test_something_barely_above_the_floor_is_sound(self) -> None:
+        self.assertTrue(audio._has_sound(self._tone(audio.AUDIBLE_SPAN)))
+
+    def test_one_channel_is_enough(self) -> None:
+        """The stride is odd for this: an even one visits a single channel for ever,
+        and audio in the other would read as silence."""
+        self.assertTrue(audio._has_sound(self._tone(9000, left=True, right=False)))
+        self.assertTrue(audio._has_sound(self._tone(9000, left=False, right=True)))
+
+    def test_it_never_raises_on_odd_input(self) -> None:
+        self.assertFalse(audio._has_sound(b""))
+        self.assertFalse(audio._has_sound(b"\x01"))
+        self.assertTrue(audio._has_sound(self._tone(9000) + b"\x01"))
+
+    def test_a_fresh_feeder_has_counted_nothing(self) -> None:
+        feeder = audio.LoopbackFeeder("pipe", device_index=-1)
+        self.assertEqual(feeder.frames_written, 0)
+        self.assertEqual(feeder.audible_frames, 0)
+
+
+class TheLoopbackDeviceLabelTest(unittest.TestCase):
+    def test_portaudio_s_suffix_is_dropped(self) -> None:
+        device = audio.LoopbackDevice(
+            index=24, name="Headphones (Temple) [Loopback]", channels=2, rate=48000
+        )
+        self.assertEqual(device.label, "Headphones (Temple)")
+
+    def test_a_name_without_it_is_left_alone(self) -> None:
+        device = audio.LoopbackDevice(
+            index=24, name="Headphones (Temple)", channels=2, rate=48000
+        )
+        self.assertEqual(device.label, "Headphones (Temple)")
+
+    def test_a_name_that_is_only_the_suffix_keeps_something(self) -> None:
+        """Better a strange name than an empty row in the list."""
+        device = audio.LoopbackDevice(
+            index=24, name=" [Loopback]", channels=2, rate=48000
+        )
+        self.assertTrue(device.label.strip())
+

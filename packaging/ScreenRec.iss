@@ -29,7 +29,7 @@
 ; what makes this right on a machine with several of them.
 
 #define Name        "ScreenRec"
-#define Version     "0.2.0"
+#define Version     "0.3.0"
 #define Publisher   "ScreenRec"
 #define RecorderExe "ScreenRec.exe"
 #define PlayerExe   "ScreenRecPlayer.exe"

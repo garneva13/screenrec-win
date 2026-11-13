@@ -27,6 +27,7 @@ holds for `levels.py`, for the same reason.
 """
 from __future__ import annotations
 
+import array
 import ctypes
 import re
 import subprocess
@@ -160,6 +161,16 @@ class LoopbackDevice:
     channels: int
     rate: int
 
+    @property
+    def label(self) -> str:
+        """The name without PortAudio's own " [Loopback]" suffix.
+
+        Every endpoint in this list is a loopback, so the word distinguishes nothing
+        and costs a third of the width of a combo box that has to show two headsets
+        whose names differ by one word.
+        """
+        return self.name.removesuffix(" [Loopback]").strip() or self.name
+
 
 def list_loopback_devices() -> list[LoopbackDevice]:
     """WASAPI loopback endpoints - one per playback device that is currently present."""
@@ -209,9 +220,20 @@ class LoopbackFeeder:
     def __init__(self, pipe_name: str, device_index: int = -1) -> None:
         self.pipe_name = pipe_name
         self.device_index = device_index
+        #: Set by `switch_to` to move the capture to another endpoint mid-recording.
+        #: Read by the capture thread; an `Event` rather than a comparison because the
+        #: thread has to notice it between two reads of a stream.
+        self._switch = threading.Event()
+        #: How many times the device really changed under a running recording. For the
+        #: caller to report, and for a test to prove it happened at all.
+        self.switches = 0
         self.error: str = ""
         self.frames_written = 0
         self.silence_frames = 0  # how much had to be invented to keep the clock
+        #: Frames that carried something. A track can be full of real, flowing,
+        #: perfectly silent audio - that is what recording the wrong endpoint sounds
+        #: like - and `frames_written` cannot tell that from a recorded conversation.
+        self.audible_frames = 0
         self.connected = threading.Event()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -225,6 +247,23 @@ class LoopbackFeeder:
     def start(self) -> None:
         self._thread = threading.Thread(target=self._run, name="loopback", daemon=True)
         self._thread.start()
+
+    def switch_to(self, device_index: int) -> bool:
+        """Capture from another endpoint from now on, without breaking the recording.
+
+        The pipe is not touched. Its *name* belongs to its handle and it was created
+        for a single instance, so re-making it mid-take would end ffmpeg's input; only
+        the capture stream in front of it is reopened. The gap that leaves - a stream
+        close and open, measured in tens of milliseconds - is filled by the same
+        silence padding that covers a dropped block, so the clock does not shift.
+
+        Returns whether anything was asked for: the same device twice is not a switch.
+        """
+        if device_index < 0 or device_index == self.device_index:
+            return False
+        self.device_index = device_index
+        self._switch.set()
+        return True
 
     def stop(self, timeout: float = 2.0) -> None:
         """Stop capturing, and do not return until the pipe is really gone.
@@ -350,28 +389,37 @@ class LoopbackFeeder:
         # whenever the bar is on screen. See portaudio.py.
         try:
             with portaudio.session() as audio:
-                info = self._device_info(audio)
-                if info is None:
-                    return
-                device_rate = int(info["defaultSampleRate"])
-                device_channels = min(2, max(1, int(info["maxInputChannels"])))
+                greeted = False  # ffmpeg is waited for once, not once per device
+                while not self._stop.is_set():
+                    self._switch.clear()
+                    info = self._device_info(audio)
+                    if info is None:
+                        return
+                    device_rate = int(info["defaultSampleRate"])
+                    device_channels = min(2, max(1, int(info["maxInputChannels"])))
 
-                with portaudio.opened(
-                    format=pyaudio.paInt16,
-                    channels=device_channels,
-                    rate=device_rate,
-                    frames_per_buffer=BLOCK_FRAMES,
-                    input=True,
-                    input_device_index=int(info["index"]),
-                ) as stream:
-                    # Drain whatever accumulates while ffmpeg is still starting up, so
-                    # the first byte on the pipe is "now" and not a stale buffer.
-                    if not self._wait_for_ffmpeg(stream):
-                        return
-                    if self._stop.is_set():
-                        return
-                    self._pump(stream, device_rate, device_channels)
-                    self._report_silence(info)
+                    with portaudio.opened(
+                        format=pyaudio.paInt16,
+                        channels=device_channels,
+                        rate=device_rate,
+                        frames_per_buffer=BLOCK_FRAMES,
+                        input=True,
+                        input_device_index=int(info["index"]),
+                    ) as stream:
+                        if not greeted:
+                            # Drain whatever accumulates while ffmpeg is still starting
+                            # up, so the first byte on the pipe is "now" and not a
+                            # stale buffer.
+                            if not self._wait_for_ffmpeg(stream):
+                                return
+                            greeted = True
+                        if self._stop.is_set():
+                            return
+                        self._pump(stream, device_rate, device_channels)
+                        self._report_silence(info)
+                    if not self._switch.is_set():
+                        return  # `_pump` came back for its own reasons, not for a move
+                    self.switches += 1
         except Exception as exc:  # PortAudio raises plain OSError subclasses
             if not self.error:
                 self.error = f"System sound capture failed: {exc}"
@@ -492,6 +540,11 @@ class LoopbackFeeder:
         """
         start = time.monotonic()
         while not self._stop.is_set():
+            if self._switch.is_set():
+                # Another endpoint was asked for. Leaving now keeps the pipe open and
+                # the written-frames count intact, so the clock carries on across the
+                # change: see `switch_to`.
+                return
             try:
                 available = stream.get_read_available()
             except Exception as exc:
@@ -510,7 +563,10 @@ class LoopbackFeeder:
                     data = _resample(data, device_rate, SAMPLE_RATE)
                 if not self._write(data):
                     break
-                self.frames_written += len(data) // (SAMPLE_WIDTH * CHANNELS)
+                frames = len(data) // (SAMPLE_WIDTH * CHANNELS)
+                self.frames_written += frames
+                if _has_sound(data):
+                    self.audible_frames += frames
                 continue
 
             expected = int((time.monotonic() - start) * SAMPLE_RATE)
@@ -665,6 +721,48 @@ class LoopbackFeeder:
             self._handle = None
             self._closing = False
             kernel32.CloseHandle(wintypes.HANDLE(handle))
+
+
+#: How far a block has to move, peak to peak, to count as sound. 16-bit full scale is
+#: 32767, so 64 is about -54 dBFS of swing.
+#:
+#: **Swing, not level, and that distinction is the whole constant.** Measured on
+#: 2026-11-13: with nothing playing at all, the loopback of this machine's headphone
+#: endpoint delivers a steady -8 to -10 - the driver never writes a true zero - while
+#: Windows' own meter for that endpoint reads 0.000. A level threshold of 8 counted
+#: that as sound, on the one device the user actually records, so every take would have
+#: looked fine and the finding it feeds would never have fired. The idle *span* there is
+#: 3. The 440 Hz tone these measurements were made with spans about 24000.
+AUDIBLE_SPAN = 64
+
+
+def _has_sound(data: bytes) -> bool:
+    """Whether a block of signed 16-bit PCM carries anything that moves.
+
+    Looks at every third sample, and the **stride is odd on purpose**. The data is
+    interleaved stereo, so an even stride visits one channel for ever: with a stride of
+    4 a recording carrying sound only in the right channel reads as digital silence.
+    Three alternates between the two.
+
+    A block is 10 ms; anything loud enough to matter lasts longer than that, and this
+    runs on the capture thread, which has a deadline to keep.
+    """
+    if not data:
+        return False
+    samples = array.array("h")
+    samples.frombytes(data[: len(data) - len(data) % 2])
+    if not samples:
+        return False
+    lowest = highest = samples[0]
+    for index in range(0, len(samples), 3):
+        value = samples[index]
+        if value < lowest:
+            lowest = value
+        elif value > highest:
+            highest = value
+        if highest - lowest > AUDIBLE_SPAN:
+            return True
+    return False
 
 
 def _mono_to_stereo(data: bytes) -> bytes:

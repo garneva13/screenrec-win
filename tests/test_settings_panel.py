@@ -1586,3 +1586,54 @@ class TheLinksToTheProject(PanelTestCase):
 
         self.assertIn(__version__, self.panel.version_label.text())
 
+
+class TheDefaultPlaybackDeviceIsNamed(PanelTestCase):
+    """"Default playback device" is a promise the list cannot keep on its own.
+
+    This machine has two endpoints whose names differ by one word, and a call playing
+    to the wrong one records as silence with nothing on screen to say so. Naming the
+    one it resolves to turns the promise into something a person can check.
+    """
+
+    DEVICES = (
+        audio_mod.LoopbackDevice(index=24, name="Headphones - wire (Temple) [Loopback]",
+                                 channels=2, rate=48000),
+        audio_mod.LoopbackDevice(index=25, name="Headphones - wifi (Temple) [Loopback]",
+                                 channels=2, rate=48000),
+    )
+
+    def _with_default(self, index: int):
+        return mock.patch.object(
+            audio_mod, "default_loopback_index", staticmethod(lambda: index)
+        )
+
+    def test_the_row_says_which_device_it_means(self) -> None:
+        with self._with_default(25):
+            self.panel.refresh_devices([], self.DEVICES)
+        text = self.panel.system_combo.itemText(1)
+        self.assertEqual(self.panel.system_combo.itemData(1), -1)
+        self.assertIn("Headphones - wifi (Temple)", text)
+
+    def test_the_loopback_suffix_is_not_shown(self) -> None:
+        with self._with_default(24):
+            self.panel.refresh_devices([], self.DEVICES)
+        for index in range(self.panel.system_combo.count()):
+            with self.subTest(row=index):
+                self.assertNotIn("[Loopback]", self.panel.system_combo.itemText(index))
+
+    def test_a_default_that_is_not_in_the_list_still_reads(self) -> None:
+        """An endpoint can disappear between the two calls; the row must not go blank."""
+        with self._with_default(99):
+            self.panel.refresh_devices([], self.DEVICES)
+        self.assertTrue(self.panel.system_combo.itemText(1).strip())
+        self.assertEqual(self.panel.system_combo.itemData(1), -1)
+
+    def test_an_audio_stack_that_raises_does_not_take_the_window_down(self) -> None:
+        def boom():
+            raise OSError("no audio service")
+
+        with mock.patch.object(audio_mod, "default_loopback_index",
+                               staticmethod(boom)):
+            self.panel.refresh_devices([], self.DEVICES)
+        self.assertTrue(self.panel.system_combo.itemText(1).strip())
+

@@ -18,6 +18,7 @@ RUSSIAN: dict[str, str] = {
     "Choose what to record…": "Что записывать…",
     "Cursor and clicks": "Курсор и клики",
     "Microphone level": "Уровень микрофона",
+    "System sound level": "Уровень звука системы",
     "Format and quality": "Формат и качество",
     "Settings": "Настройки",
     "Settings…": "Настройки…",

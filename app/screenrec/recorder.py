@@ -1167,4 +1167,12 @@ class RecordingSession:
             return feeder.error
         if feeder.frames_written == 0:
             return _("System sound was on but no audio arrived.")
+        if feeder.audible_frames == 0:
+            # The endpoint was alive and carried nothing. On a machine with two
+            # playback devices this is what recording the one the sound is *not*
+            # going to looks like, and it used to pass as a good recording.
+            return _(
+                "System sound was recorded, but it was silent from start to finish - "
+                "check which playback device is being recorded."
+            )
         return ""

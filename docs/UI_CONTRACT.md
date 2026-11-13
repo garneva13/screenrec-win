@@ -13,8 +13,12 @@ importance, and you had to read all of them to press one button. Recording is an
 not a configuration, so the new interface is built around the action:
 
 1. **The bar** — a small floating always-on-top strip. It is the application. Source
-   chip, device toggles (microphone, system sound, camera, cursor), two quick settings,
-   the record button, a gear. The camera toggle is on the recording row as well: it is
+   chip, device toggles (microphone, system sound, camera, cursor), **one level meter
+   per audio source**, two quick settings, the record button, a gear. The meters are on
+   the recording row too: a playback device that changes mid-take shows up there and
+   nowhere else. One meter fed `max(mic, system)` until 2026-11-13, when it cost a
+   recorded call - the microphone moved the needle while the system sound recorded
+   silence. The camera toggle is on the recording row as well: it is
    the one setting worth changing mid-take, because the camera is a desktop window and
    taking it away costs the recording nothing.
 2. **Popovers** — a floating surface above or below the bar, one per chip. The source

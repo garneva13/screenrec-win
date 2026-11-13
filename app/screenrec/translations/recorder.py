@@ -198,6 +198,23 @@ RUSSIAN: dict[str, str] = {
     "The recording could not be set up: {reason}":
         "Не удалось настроить запись: {reason}",
     "The recording could not be set up.": "Не удалось настроить запись.",
+    "System sound was recorded, but it was silent from start to finish - "
+    "check which playback device is being recorded.":
+        "Звук системы записан, но от начала до конца он оказался тишиной — "
+        "проверьте, с какого устройства воспроизведения идёт запись.",
+    "No system sound has arrived yet. Check which playback device is "
+    "being recorded - the recording is otherwise fine.":
+        "Звук системы пока не пришёл. Проверьте, с какого устройства "
+        "воспроизведения идёт запись — в остальном запись в порядке.",
+    # Where the sound went while a recording was running.
+    "Sound moved to “{name}”; the recording moved with it.":
+        "Звук перешёл на «{name}» — запись перешла следом.",
+    "Sound moved to “{name}”, which this recording cannot follow. "
+    "Restart ScreenRec to record it.":
+        "Звук перешёл на «{name}», а за ним эта запись пойти не может. "
+        "Перезапустите ScreenRec, чтобы записывать с него.",
+    "The sound is going to “{where}”, but “{here}” is being recorded.":
+        "Звук идёт в «{where}», а записывается «{here}».",
     "System sound was on but no audio arrived.":
         "Звук системы был включён, но звука не пришло.",
     # The settings changed while the recording was paused, so the segments cannot be

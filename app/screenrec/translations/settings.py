@@ -87,6 +87,7 @@ RUSSIAN: dict[str, str] = {
     "Custom": "Свои настройки",
     "Off": "Выкл.",
     "Default playback device": "Устройство по умолчанию",
+    "Default playback device ({name})": "Устройство по умолчанию ({name})",
     "{name} (not found)": "{name} (не найден)",
     "Device {index} (not found)": "Устройство {index} (не найдено)",
     "Mixed into one": "Смешать в одну",

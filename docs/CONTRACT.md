@@ -18,6 +18,10 @@ the checkout root\
     config.py     DONE   Settings dataclass, JSON load/save
     audio.py      DONE   dshow mic list, WASAPI loopback feeder over a named pipe
     recorder.py   DONE   ffmpeg command builder (N sources) + process lifecycle
+    endpoints.py  DONE   which playback device Windows is using, and which ones
+                         are making a sound - COM, no capture stream, so it can
+                         be asked while a recording holds one. 1.3 ms for the
+                         default's name, 0.34 ms for every endpoint's peak
     hotkeys.py    TODO
     clicks.py     TODO   low-level mouse hook
     overlay.py    TODO   region selector + click highlight

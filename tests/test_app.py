@@ -31,6 +31,7 @@ import inspect
 import os
 import sys
 import tempfile
+import types
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -46,6 +47,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtWidgets  # noqa: E402
 
 from screenrec import capabilities, config, encoders, recorder, storage, winapi  # noqa: E402
+from screenrec import audio as audio_module  # noqa: E402
 from screenrec import multi as multi_module  # noqa: E402
 from screenrec.ui import app as app_module  # noqa: E402
 from screenrec.ui import surfaces  # noqa: E402
@@ -146,6 +148,14 @@ class _Controller:
     # The settings window asks for the global hotkeys to be stood down while a
     # shortcut box is reading a key press, and `open_settings` connects to it.
     # The bar's camera button, which is the one toggle that works mid-take.
+    # The take's own watch on the system-sound track; see `_watch_system_sound`.
+    _watch_system_sound = app_module.Application._watch_system_sound
+    # Following the playback device, and saying where the sound went instead.
+    _tick_endpoints = app_module.Application._tick_endpoints
+    _follow_default = app_module.Application._follow_default
+    _advise_on_silence = app_module.Application._advise_on_silence
+    _loopback_index_named = app_module.Application._loopback_index_named
+    _loopback_name = app_module.Application._loopback_name
     _on_camera_toggled = app_module.Application._on_camera_toggled
     _choose_camera = app_module.Application._choose_camera
     _start_webcam = app_module.Application._start_webcam
@@ -206,6 +216,11 @@ class _Controller:
         self.webcam = None
         self.highlight = None
         self.frames: list = []
+        # Where the sound is going, as `Application` tracks it.
+        self._capturing_name = ""
+        self._advised_name = ""
+        self.endpoints = None
+        self.meters_started = 0
 
     def open_source_picker(self) -> None:
         self.picker_opened += 1
@@ -215,6 +230,10 @@ class _Controller:
 
     def _hide_overlays(self) -> None:
         self.overlays_hidden += 1
+
+    def _start_meters(self) -> None:
+        """The real one opens WASAPI streams; nothing here may touch hardware."""
+        self.meters_started += 1
 
     def _watch_space(self) -> None:
         pass
@@ -2160,4 +2179,301 @@ class _NoSession:
 
     def start(self, on_progress=None, loopback_device=-1) -> str:
         return ""
+
+
+class SilentSystemSoundIsReportedDuringTheTakeTest(ControllerTestCase):
+    """The end-of-take finding is right and too late.
+
+    A forty-minute call is already lost by the time it is said, which is how this was
+    found on 2026-11-13. The feeder's counters answer the same question while the take
+    is running.
+    """
+
+    class _Feeder:
+        def __init__(self, seconds: float, audible: int, error: str = "") -> None:
+            self.frames_written = int(seconds * 48000)
+            self.audible_frames = audible
+            self.error = error
+
+        @property
+        def seconds_written(self) -> float:
+            return self.frames_written / 48000.0
+
+    class _Session:
+        active = True
+
+        def __init__(self, feeder) -> None:
+            self.recorder = types.SimpleNamespace(feeder=feeder)
+
+    def _controller_with(self, feeder, **settings):
+        controller = self.controller(system_audio_enabled=True, **settings)
+        controller._silence_warned = False
+        return controller, self._Session(feeder)
+
+    def _said(self) -> str:
+        return self.bar.status_label.text()
+
+    def test_a_long_silent_track_is_reported_once(self) -> None:
+        controller, session = self._controller_with(self._Feeder(30.0, 0))
+        controller._watch_system_sound(session)
+        self.assertIn("playback device", self._said())
+        self.assertTrue(controller._silence_warned)
+
+        self.bar.set_status("")
+        controller._watch_system_sound(session)
+        self.assertEqual(self._said(), "", "it must not nag every tick")
+
+    def test_a_short_silence_is_not_reported(self) -> None:
+        """A pause in a conversation is not a broken recording."""
+        controller, session = self._controller_with(self._Feeder(8.0, 0))
+        controller._watch_system_sound(session)
+        self.assertEqual(self._said(), "")
+        self.assertFalse(controller._silence_warned)
+
+    def test_a_track_with_sound_in_it_is_never_reported(self) -> None:
+        controller, session = self._controller_with(self._Feeder(600.0, 48000))
+        controller._watch_system_sound(session)
+        self.assertEqual(self._said(), "")
+
+    def test_nothing_is_said_when_system_sound_is_off(self) -> None:
+        controller = self.controller(system_audio_enabled=False)
+        controller._silence_warned = False
+        controller._watch_system_sound(self._Session(self._Feeder(600.0, 0)))
+        self.assertEqual(self._said(), "")
+
+    def test_a_feeder_that_failed_is_left_to_its_own_report(self) -> None:
+        """`_feeder_note` says that one, with the reason; two lines for one fault is
+        one line too many."""
+        controller, session = self._controller_with(
+            self._Feeder(600.0, 0, error="the device vanished")
+        )
+        controller._watch_system_sound(session)
+        self.assertEqual(self._said(), "")
+
+    def test_a_take_with_no_feeder_at_all_is_quiet(self) -> None:
+        controller = self.controller(system_audio_enabled=True)
+        controller._silence_warned = False
+        controller._watch_system_sound(types.SimpleNamespace(recorder=None))
+        self.assertEqual(self._said(), "")
+
+    def test_each_take_gets_its_own_warning(self) -> None:
+        controller, session = self._controller_with(self._Feeder(30.0, 0))
+        controller._watch_system_sound(session)
+        self.assertTrue(controller._silence_warned)
+        with mock.patch.object(recorder, "RecordingSession", _NoSession):
+            controller.session = None
+            controller._really_start()
+        self.assertFalse(
+            controller._silence_warned,
+            "a take that starts clean must be able to report its own silence",
+        )
+
+
+WIRED = "Headphones - wire (Temple)"
+WIFI = "Headphones - wifi (Temple)"
+SPEAKERS = "Speakers (Realtek)"
+
+class _Endpoints:
+    """A stand-in for `endpoints.Endpoints` with the answers written down."""
+
+    def __init__(self, default=WIRED, peaks=None) -> None:
+        self.problem = ""
+        self._default = default
+        self._peaks = dict(peaks or {})
+        self.refreshed = 0
+
+    def default_name(self) -> str:
+        return self._default
+
+    def peaks(self) -> dict:
+        return dict(self._peaks)
+
+    def loudest(self, ignoring: str = "", floor: float = 0.02):
+        best, value = "", 0.0
+        for name, peak in self._peaks.items():
+            if name == ignoring or peak < floor:
+                continue
+            if peak > value:
+                best, value = name, peak
+        return best, value
+
+    def refresh(self) -> None:
+        self.refreshed += 1
+
+    def close(self) -> None:
+        pass
+
+
+def _loopbacks(*names):
+    from screenrec.audio import LoopbackDevice
+
+    return [
+        LoopbackDevice(index=24 + n, name=f"{name} [Loopback]", channels=2, rate=48000)
+        for n, name in enumerate(names)
+    ]
+
+
+class FollowingThePlaybackDeviceTest(ControllerTestCase):
+    """"Default playback device" is a promise to follow Windows, and it was resolved
+    once, when the recording started. A wireless headset running out of battery moves
+    every sound on the machine to the speakers and left the recording capturing a
+    device nobody was listening to."""
+
+    class _Feeder:
+        def __init__(self) -> None:
+            self.device_index = 24
+            self.switched_to = []
+
+        def switch_to(self, index: int) -> bool:
+            if index == self.device_index:
+                return False
+            self.device_index = index
+            self.switched_to.append(index)
+            return True
+
+    class _Session:
+        active = True
+
+        def __init__(self, feeder) -> None:
+            self.recorder = types.SimpleNamespace(feeder=feeder)
+
+    def _ready(self, default=WIRED, chosen=-1, names=(WIRED, SPEAKERS)):
+        controller = self.controller(
+            system_audio_enabled=True, system_audio_device=chosen
+        )
+        controller.endpoints = _Endpoints(default=default)
+        controller._capturing_name = WIRED
+        patch = mock.patch.object(
+            audio_module, "list_loopback_devices",
+            staticmethod(lambda: _loopbacks(*names)),
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+        return controller
+
+    def test_nothing_happens_while_the_device_stays_put(self) -> None:
+        controller = self._ready(default=WIRED)
+        feeder = self._Feeder()
+        controller.session = self._Session(feeder)
+        controller._tick_endpoints()
+        self.assertEqual(feeder.switched_to, [])
+        self.assertEqual(self.bar.status_label.text(), "")
+
+    def test_the_capture_follows_the_default(self) -> None:
+        controller = self._ready(default=SPEAKERS)
+        feeder = self._Feeder()
+        controller.session = self._Session(feeder)
+        with mock.patch.object(type(controller), "_start_meters", lambda self: None):
+            controller._tick_endpoints()
+        self.assertEqual(feeder.switched_to, [25], "it must move to the speakers")
+        self.assertEqual(controller._capturing_name, SPEAKERS)
+        self.assertIn("moved", self.bar.status_label.text())
+
+    def test_a_named_device_is_never_moved(self) -> None:
+        """The user chose it. Second-guessing that is worse than recording silence."""
+        controller = self._ready(default=SPEAKERS, chosen=24)
+        feeder = self._Feeder()
+        controller.session = self._Session(feeder)
+        controller.endpoints._peaks = {WIRED: 0.0, SPEAKERS: 0.5}
+        with mock.patch.object(type(controller), "_start_meters", lambda self: None):
+            controller._tick_endpoints()
+        self.assertEqual(feeder.switched_to, [])
+
+    def test_a_device_portaudio_never_saw_is_reported_not_guessed(self) -> None:
+        """PortAudio enumerates once; a device plugged in afterwards is not there,
+        and a wrong index would record the wrong thing in silence."""
+        controller = self._ready(default="A headset nobody enumerated")
+        feeder = self._Feeder()
+        controller.session = self._Session(feeder)
+        with mock.patch.object(type(controller), "_start_meters", lambda self: None):
+            controller._tick_endpoints()
+        self.assertEqual(feeder.switched_to, [])
+        self.assertIn("cannot follow", self.bar.status_label.text())
+        self.assertEqual(controller.endpoints.refreshed, 1)
+
+    def test_it_follows_with_no_recording_running_and_says_nothing(self) -> None:
+        """The meter has to point at the right device too; a sentence about it when
+        nothing is being recorded is noise."""
+        controller = self._ready(default=SPEAKERS)
+        controller.session = None
+        started = []
+        with mock.patch.object(
+            type(controller), "_start_meters", lambda self: started.append(1)
+        ):
+            controller._tick_endpoints()
+        self.assertEqual(controller._capturing_name, SPEAKERS)
+        self.assertEqual(started, [1])
+        self.assertEqual(self.bar.status_label.text(), "")
+
+    def test_nothing_is_done_when_system_sound_is_off(self) -> None:
+        controller = self.controller(system_audio_enabled=False)
+        controller.endpoints = _Endpoints(default=SPEAKERS)
+        controller._capturing_name = WIRED
+        controller._tick_endpoints()
+        self.assertEqual(controller._capturing_name, WIRED)
+
+    def test_a_machine_without_com_simply_does_none_of_this(self) -> None:
+        controller = self.controller(system_audio_enabled=True)
+        controller.endpoints = None
+        controller._tick_endpoints()  # must not raise
+        self.assertEqual(self.bar.status_label.text(), "")
+
+
+class SayingWhereTheSoundWentTest(ControllerTestCase):
+    """A named device that is silent while another one is playing."""
+
+    class _Session:
+        active = True
+        recorder = None
+
+    def _ready(self, peaks):
+        controller = self.controller(
+            system_audio_enabled=True, system_audio_device=24
+        )
+        controller.endpoints = _Endpoints(default=WIRED, peaks=peaks)
+        controller.session = self._Session()
+        patch = mock.patch.object(
+            audio_module, "list_loopback_devices",
+            staticmethod(lambda: _loopbacks(WIRED, SPEAKERS)),
+        )
+        patch.start()
+        self.addCleanup(patch.stop)
+        return controller
+
+    def test_it_names_both_devices(self) -> None:
+        controller = self._ready({WIRED: 0.0, SPEAKERS: 0.4})
+        controller._tick_endpoints()
+        said = self.bar.status_label.text()
+        self.assertIn(SPEAKERS, said)
+        self.assertIn(WIRED, said)
+
+    def test_it_is_said_once(self) -> None:
+        controller = self._ready({WIRED: 0.0, SPEAKERS: 0.4})
+        controller._tick_endpoints()
+        self.bar.set_status("")
+        controller._tick_endpoints()
+        self.assertEqual(self.bar.status_label.text(), "")
+
+    def test_a_chosen_device_that_is_playing_says_nothing(self) -> None:
+        controller = self._ready({WIRED: 0.3, SPEAKERS: 0.4})
+        controller._tick_endpoints()
+        self.assertEqual(self.bar.status_label.text(), "")
+
+    def test_a_quiet_machine_says_nothing(self) -> None:
+        """Nothing playing anywhere is not a misrouted recording."""
+        controller = self._ready({WIRED: 0.0, SPEAKERS: 0.0})
+        controller._tick_endpoints()
+        self.assertEqual(self.bar.status_label.text(), "")
+
+    def test_residue_below_the_floor_is_not_sound(self) -> None:
+        controller = self._ready({WIRED: 0.0, SPEAKERS: 0.0004})
+        controller._tick_endpoints()
+        self.assertEqual(self.bar.status_label.text(), "")
+
+    def test_nothing_is_said_when_no_recording_is_running(self) -> None:
+        """Outside a take the two meters show it without a sentence."""
+        controller = self._ready({WIRED: 0.0, SPEAKERS: 0.4})
+        controller.session = None
+        controller._tick_endpoints()
+        self.assertEqual(self.bar.status_label.text(), "")
 

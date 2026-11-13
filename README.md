@@ -44,7 +44,8 @@ is bundled under `tools\ffmpeg`.
 | | |
 |---|---|
 | Source | whole monitor, a region you drag out, or one window |
-| Audio | microphone (DirectShow) and/or system sound (WASAPI loopback), mixed or as two tracks |
+| Audio | microphone (DirectShow) and/or system sound (WASAPI loopback), mixed or as two tracks, each with its own level meter on the bar |
+| Playback device | "Default" follows Windows **while recording**: a headset that runs out of battery moves the sound to the speakers, and the recording moves with it. A named device is never moved - the bar says where the sound went instead |
 | Cursor | drawn or not; clicks optionally get a fading ring |
 | Camera | optional, in a corner of the recording: four corners, four sizes, rounded rectangle / circle / rectangle, and the camera's own capture resolution chosen for the window or picked by hand - drawn on the desktop, so it costs the capture pipeline nothing, and it can be switched off **in the middle of a take** when it covers something |
 | Settings | behind the gear: five pages, a diagram of where the camera sits, and shortcut boxes that read the keys you press |

@@ -1760,3 +1760,52 @@ class TheTakeCarriesItsOwnClockTest(SessionLifecycleMixin, unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhatTheSystemSoundTrackActuallyGotTest(unittest.TestCase):
+    """`RecordingSession._feeder_note` is the only thing that reads the counters the
+    feeder keeps, and it is what the bar says when a take ends."""
+
+    class _Feeder:
+        def __init__(self, error="", frames_written=0, audible_frames=0) -> None:
+            self.error = error
+            self.frames_written = frames_written
+            self.audible_frames = audible_frames
+
+    class _Recorder:
+        def __init__(self, feeder) -> None:
+            self.feeder = feeder
+
+    def _note(self, feeder) -> str:
+        return rec.RecordingSession._feeder_note(self._Recorder(feeder))
+
+    def test_no_system_sound_at_all_means_no_note(self) -> None:
+        self.assertEqual(self._note(None), "")
+
+    def test_a_real_conversation_says_nothing(self) -> None:
+        self.assertEqual(
+            self._note(self._Feeder(frames_written=48000 * 600,
+                                    audible_frames=48000 * 480)),
+            "",
+        )
+
+    def test_an_endpoint_that_produced_nothing_is_reported(self) -> None:
+        self.assertIn("no audio arrived", self._note(self._Feeder()))
+
+    def test_a_track_that_is_all_silence_is_reported_too(self) -> None:
+        """The case that cost a recorded call: the endpoint was alive and running and
+        carrying nothing, because the call was playing out of a different one. Frames
+        flowed, so the old check passed it as a good recording."""
+        note = self._note(
+            self._Feeder(frames_written=48000 * 600, audible_frames=0)
+        )
+        self.assertTrue(note)
+        self.assertIn("silent", note)
+        self.assertIn("playback device", note, "it has to say what to go and look at")
+
+    def test_an_error_outranks_both(self) -> None:
+        note = self._note(
+            self._Feeder(error="the device vanished", frames_written=0)
+        )
+        self.assertEqual(note, "the device vanished")
+

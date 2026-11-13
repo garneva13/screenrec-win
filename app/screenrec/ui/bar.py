@@ -25,6 +25,8 @@ are carried over from the island this replaces; they were proven there.
 """
 from __future__ import annotations
 
+import math
+
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .. import i18n, winapi
@@ -43,7 +45,22 @@ TOGGLE_WIDTH = 46
 #: The left share of a toggle button that toggles; the rest opens its menu.
 TOGGLE_SPLIT = 0.70
 
-METER_BARS = 5
+METER_BARS = 7
+#: The quietest thing the meter shows at all, in dBFS. Below it, no bar lights.
+#:
+#: **The scale is logarithmic and the reason is a measurement, not taste.** A linear
+#: scale lights `level x bars`, so a tone at 27% of full scale - measured at 0.264 on
+#: 2026-11-13, and loud to listen to - lit one bar of five, and so did everything else
+#: anyone records at. The user's report was "it only shows one division". In dBFS that
+#: tone is -11.6, which is two thirds of the way up this scale.
+#:
+#: -45 dB puts the floor below anything worth seeing and above the noise: the headphone
+#: driver's idle offset of 9 counts out of 32767 is -71 dBFS and stays dark.
+METER_FLOOR_DB = -45.0
+#: At and above this the top segment turns amber: the signal is close enough to full
+#: scale to clip. -3 dBFS, not the top segment's own -6.4 dB, because -6 is an ordinary
+#: level for music and a warning that is on all the time is not a warning.
+METER_HOT_LEVEL = 0.708
 METER_INTERVAL_MS = 50
 METER_DECAY = 0.12
 #: Ticks of silence before the meter's one timer switches itself off.
@@ -196,9 +213,14 @@ class _VSep(QtWidgets.QWidget):
 
 
 class LevelMeter(QtWidgets.QWidget):
-    """Five bars that light in "live" green with what the microphone is hearing.
+    """Five bars that light in "live" green with what one source is hearing.
 
-    Fed by `set_mic_level`, which may arrive at any rate at all - so each value is taken
+    One source, not two. The bar carried a single meter fed `max(mic, system)` until
+    2026-11-13, when a recorded call came back with the user's own voice and nothing
+    from the other end: the microphone had been moving the needle all along, so the one
+    thing on screen that could have reported the silence was reporting the microphone.
+
+    Fed by `set_level`, which may arrive at any rate at all - so each value is taken
     as a **peak**, never as a level to hold. The rise is immediate (a peak that is not
     shown is a peak that did not help) and the fall is a fixed step per tick, driven by
     the clock rather than by the caller, which is what stops the thing flickering on
@@ -216,7 +238,10 @@ class LevelMeter(QtWidgets.QWidget):
     """
 
     BAR_WIDTH = 3
-    BAR_GAP = 3
+    #: Two rather than three: seven bars at a 3 px gap would be 39 px per meter and
+    #: there are two of them now. At 2 px the pair costs 12 px more than the single
+    #: five-bar meter did, for four more segments of resolution.
+    BAR_GAP = 2
 
     def __init__(self, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(parent)
@@ -232,7 +257,7 @@ class LevelMeter(QtWidgets.QWidget):
 
     # -- state
 
-    def set_mic_level(self, level: float) -> None:
+    def set_level(self, level: float) -> None:
         """Push a peak, 0..1.
 
         Values outside the range are clamped rather than refused; a meter must not
@@ -249,8 +274,13 @@ class LevelMeter(QtWidgets.QWidget):
             if not self._timer.isActive():
                 self._timer.start()
 
+    #: The name this widget had while there was only one of it. Kept because it is
+    #: what `Bar.set_mic_level` and the tests say, and renaming a public method to
+    #: match a layout change is churn.
+    set_mic_level = set_level
+
     def set_active(self, active: bool) -> None:
-        """Off means the microphone is not armed; the bars go grey, not green."""
+        """Off means this source is not armed; the bars go grey, not green."""
         if active != self._active:
             self._active = active
             self.update()
@@ -259,8 +289,20 @@ class LevelMeter(QtWidgets.QWidget):
         return self._level
 
     def lit_bars(self) -> int:
-        """Half-up, not `round`: at exactly 0.5 a banker's round lights two of five."""
-        return min(METER_BARS, int(self._level * METER_BARS + 0.5))
+        """How many segments are lit, on a decibel scale - see `METER_FLOOR_DB`.
+
+        Anything above the floor lights **at least one** segment. These meters exist to
+        answer "is anything arriving at all" before they answer "how much", and a
+        signal that is present but rounds down to nothing would be the old failure in a
+        new place.
+        """
+        if self._level <= 0.0:
+            return 0
+        decibels = 20.0 * math.log10(self._level)
+        if decibels <= METER_FLOOR_DB:
+            return 0
+        fraction = (decibels - METER_FLOOR_DB) / (0.0 - METER_FLOOR_DB)
+        return max(1, min(METER_BARS, math.ceil(fraction * METER_BARS)))
 
     def timer_running(self) -> bool:
         return self._timer.isActive()
@@ -294,12 +336,22 @@ class LevelMeter(QtWidgets.QWidget):
         on_colour = QtGui.QColor(
             theme.COLOURS["live" if self._active else "disabled"]
         )
+        # The last segment is -6 dBFS and up, where a microphone is close to clipping.
+        # Amber there says "turn it down" without a sentence; below it nothing changes.
+        hot_colour = QtGui.QColor(
+            theme.COLOURS["warn" if self._active else "disabled"]
+        )
         off_colour = QtGui.QColor(theme.COLOURS["line"])
         bottom = float(self.height() - 2)
         for index in range(METER_BARS):
-            tall = 7.0 + index * 2.6
+            tall = 5.0 + index * 1.9
             left = index * (self.BAR_WIDTH + self.BAR_GAP)
-            painter.setBrush(on_colour if index < lit else off_colour)
+            if index >= lit:
+                painter.setBrush(off_colour)
+            elif index == METER_BARS - 1 and self._level >= METER_HOT_LEVEL:
+                painter.setBrush(hot_colour)
+            else:
+                painter.setBrush(on_colour)
             painter.drawRoundedRect(
                 QtCore.QRectF(left, bottom - tall, self.BAR_WIDTH, tall), 1.5, 1.5
             )
@@ -851,6 +903,10 @@ class Bar(surfaces.FloatingSurface):
         self.meter.setToolTip(_("Microphone level"))
         line.addWidget(self.meter)
 
+        self.system_meter = LevelMeter(row)
+        self.system_meter.setToolTip(_("System sound level"))
+        line.addWidget(self.system_meter)
+
         line.addWidget(_VSep(20, row))
 
         self.fps_pill = Pill(_("{rate} fps").format(rate=60))
@@ -938,6 +994,16 @@ class Bar(surfaces.FloatingSurface):
             metrics.horizontalAdvance(_detail_text(8888.0, 240.0))
         )
         line.addWidget(self.detail)
+
+        # The take is the whole reason these exist. An output device that is switched
+        # away mid-call, or a meeting that moves to another endpoint, shows up here and
+        # nowhere else: the idle row is not on screen while recording.
+        self.meter_rec = LevelMeter(container)
+        self.meter_rec.setToolTip(_("Microphone level"))
+        line.addWidget(self.meter_rec)
+        self.system_meter_rec = LevelMeter(container)
+        self.system_meter_rec.setToolTip(_("System sound level"))
+        line.addWidget(self.system_meter_rec)
         line.addStretch(1)
 
         # The one setting worth changing mid-take: the camera sometimes sits on top of
@@ -967,9 +1033,12 @@ class Bar(surfaces.FloatingSurface):
         button.set_on(not button.is_on())
         if button is self.mic_button:
             button.set_kind("microphone" if button.is_on() else "microphone_off")
-            self.meter.set_active(button.is_on())
+            for meter in (self.meter, self.meter_rec):
+                meter.set_active(button.is_on())
         elif button is self.system_button:
             button.set_kind("speaker" if button.is_on() else "speaker_off")
+            for meter in (self.system_meter, self.system_meter_rec):
+                meter.set_active(button.is_on())
         elif button in (self.camera_button, self.camera_button_rec):
             # Two buttons, one setting: the other row has to agree, or switching the
             # camera off while recording would leave the idle row claiming it is on.
@@ -1000,7 +1069,10 @@ class Bar(surfaces.FloatingSurface):
         self.system_button.set_kind("speaker" if system else "speaker_off")
         self.clicks_button.set_on(clicks)
         self.set_camera(camera)
-        self.meter.set_active(mic)
+        for meter in (self.meter, self.meter_rec):
+            meter.set_active(mic)
+        for meter in (self.system_meter, self.system_meter_rec):
+            meter.set_active(system)
 
     def set_camera(self, on: bool) -> None:
         """Both camera buttons at once - the idle row's and the recording row's."""
@@ -1105,7 +1177,12 @@ class Bar(surfaces.FloatingSurface):
         self.detail.setStyleSheet(f"color: {colour}; background: transparent;")
 
     def set_mic_level(self, level: float) -> None:
-        self.meter.set_mic_level(level)
+        for meter in (self.meter, self.meter_rec):
+            meter.set_level(level)
+
+    def set_system_level(self, level: float) -> None:
+        for meter in (self.system_meter, self.system_meter_rec):
+            meter.set_level(level)
 
     def is_recording(self) -> bool:
         return self._recording
@@ -1122,6 +1199,10 @@ class Bar(surfaces.FloatingSurface):
         which keeps what produced the status line so it can be run again.
         """
         self.source_chip.setToolTip(_("Choose what to record"))
+        self.meter.setToolTip(_("Microphone level"))
+        self.meter_rec.setToolTip(_("Microphone level"))
+        self.system_meter.setToolTip(_("System sound level"))
+        self.system_meter_rec.setToolTip(_("System sound level"))
         self.mic_button.setToolTip(pick("bar.microphone", "Microphone"))
         self.system_button.setToolTip(pick("bar.system_sound", "System sound"))
         self.clicks_button.setToolTip(_("Cursor and clicks"))

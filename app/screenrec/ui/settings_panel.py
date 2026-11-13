@@ -670,7 +670,10 @@ class SettingsPanel(surfaces.FloatingSurface):
         self.mic_switch = Switch()
         layout.addWidget(self._row("Record the microphone", self.mic_switch))
         self.mic_combo = self._combo()
-        layout.addWidget(self._half(self._field("Device", self.mic_combo)))
+        # Full width, unlike most fields: a device name is long by nature, and the
+        # half-width column cut "Default playback device (Headphones - wire (Temple))"
+        # off at exactly the word that says which device it is.
+        layout.addWidget(self._field("Device", self.mic_combo))
         self.mic_note = self._note("")
         self.mic_note.setVisible(False)
         layout.addWidget(self.mic_note)
@@ -680,7 +683,7 @@ class SettingsPanel(surfaces.FloatingSurface):
         self.system_switch = Switch()
         layout.addWidget(self._row("Record what the computer plays", self.system_switch))
         self.system_combo = self._combo()
-        layout.addWidget(self._half(self._field("Source", self.system_combo)))
+        layout.addWidget(self._field("Source", self.system_combo))
         layout.addSpacing(22)
 
         self._group(layout, "Tracks")
@@ -1239,12 +1242,32 @@ class SettingsPanel(surfaces.FloatingSurface):
             self.mic_note.setVisible(False)
             self.mic_combo.setToolTip(self.mic_combo.currentText())
 
+    def _default_loopback_label(self) -> str:
+        """"Default playback device", and which one that is right now.
+
+        The bare phrase is not enough to act on. This machine has two endpoints whose
+        names differ by one word, and a call playing to the wrong one records as
+        silence with nothing on screen to say so - which is how a whole call was lost
+        on 2026-11-13. Naming it turns a promise into something checkable.
+        """
+        plain = _("Default playback device")
+        try:
+            index = audio_mod.default_loopback_index()
+        except Exception:  # noqa: BLE001 - somebody else's audio stack
+            return plain
+        for device in self.loopbacks:
+            if device.index == index:
+                return _("Default playback device ({name})").format(
+                    name=device.label
+                )
+        return plain
+
     def _fill_system_combo(self) -> None:
         self.system_combo.clear()
         self.system_combo.addItem(_("Off"), _OFF)
-        self.system_combo.addItem(_("Default playback device"), -1)
+        self.system_combo.addItem(self._default_loopback_label(), -1)
         for device in self.loopbacks:
-            self.system_combo.addItem(device.name, device.index)
+            self.system_combo.addItem(device.label, device.index)
         if self.settings.system_audio_enabled:
             wanted = self.settings.system_audio_device
             index = self.system_combo.findData(wanted)

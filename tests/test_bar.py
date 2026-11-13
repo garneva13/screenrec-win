@@ -552,11 +552,70 @@ class TestMeter(unittest.TestCase):
     def tearDown(self) -> None:
         self.bar.deleteLater()
 
-    def test_level_lights_bars_in_proportion(self) -> None:
-        for level, lit in ((0.0, 0), (0.2, 1), (0.5, 3), (1.0, 5)):
-            with self.subTest(level=level):
-                self.meter.set_mic_level(level)
-                self.assertEqual(self.meter.lit_bars(), lit)
+    def test_the_scale_is_decibels_not_a_fraction(self) -> None:
+        """A linear scale put everything anyone records at in the first segment.
+
+        Measured on 2026-11-13: a tone at 27% of full scale reaches the meter as
+        0.264 and is loud to listen to. On the old scale it lit one bar of five - the
+        user's report was that the meter "only shows one division". It is -11.6 dBFS,
+        which is most of the way up a -45 dB scale.
+        """
+        self.meter.set_mic_level(0.264)
+        self.assertGreaterEqual(self.meter.lit_bars(), 5)
+
+    def test_silence_lights_nothing(self) -> None:
+        self.meter.set_mic_level(0.0)
+        self.assertEqual(self.meter.lit_bars(), 0)
+
+    def test_below_the_floor_lights_nothing(self) -> None:
+        """A headphone driver's idle offset is about -71 dBFS; it must stay dark."""
+        self.meter.set_mic_level(0.0003)
+        self.assertEqual(self.meter.lit_bars(), 0)
+
+    def test_anything_above_the_floor_lights_at_least_one(self) -> None:
+        """These meters answer "is anything arriving" before "how much", and a signal
+        that rounds down to nothing would be the lost-call failure in a new place."""
+        from screenrec.ui.bar import METER_FLOOR_DB
+
+        just_above = 10 ** ((METER_FLOOR_DB + 0.5) / 20.0)
+        self.meter.set_mic_level(just_above)
+        self.assertEqual(self.meter.lit_bars(), 1)
+
+    def test_full_scale_lights_them_all(self) -> None:
+        self.meter.set_mic_level(1.0)
+        self.assertEqual(self.meter.lit_bars(), bar_module.METER_BARS)
+
+    def test_the_top_segment_warns_only_when_it_is_nearly_clipping(self) -> None:
+        """-6 dBFS is an ordinary level for music, and a warning that is on all the
+        time is not a warning. Amber starts at -3."""
+        self.meter.resize(self.meter.sizeHint())
+
+        self.meter._level = 0.60  # all seven bars, nothing to warn about
+        loud = self.meter.grab().toImage()
+        self.meter._level = 1.0
+        clipping = self.meter.grab().toImage()
+        self.assertEqual(self.meter.lit_bars(), bar_module.METER_BARS)
+        self.assertNotEqual(loud, clipping, "the top segment has to change colour")
+
+        warn = QtGui.QColor(theme.COLOURS["warn"]).rgb()
+        self.assertIn(warn, self._colours(clipping))
+        self.assertNotIn(warn, self._colours(loud))
+
+    @staticmethod
+    def _colours(image) -> set:
+        return {
+            image.pixel(x, y)
+            for x in range(image.width())
+            for y in range(image.height())
+        }
+
+    def test_it_rises_with_the_level_and_never_falls(self) -> None:
+        seen = []
+        for level in (0.01, 0.05, 0.2, 0.5, 1.0):
+            self.meter._level = level  # straight in: `set_mic_level` only ever raises
+            seen.append(self.meter.lit_bars())
+        self.assertEqual(seen, sorted(seen))
+        self.assertLess(seen[0], seen[-1], "the scale has to spread them out")
 
     def test_out_of_range_levels_are_clamped_not_refused(self) -> None:
         self.meter.set_mic_level(4.0)
@@ -798,4 +857,62 @@ class TestTheCameraButton(unittest.TestCase):
                 catcher = _Catch(self.bar.camera_menu_requested)
                 button.menu_requested.emit()
                 self.assertEqual(catcher.count, 1)
+
+
+class TestTheTwoLevelMeters(unittest.TestCase):
+    """One meter per source.
+
+    The bar fed a single meter `max(mic, system)` until 2026-11-13, when a recorded
+    call came back with the user's own voice and nothing from the other end: the
+    microphone had been moving the needle the whole time, so the one indicator that
+    could have reported the silence was reporting the microphone.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.app = _app()
+
+    def setUp(self) -> None:
+        self.bar = _furnished()
+
+    def tearDown(self) -> None:
+        self.bar.deleteLater()
+
+    def test_there_is_one_for_each_source_on_both_rows(self) -> None:
+        for name in ("meter", "system_meter", "meter_rec", "system_meter_rec"):
+            with self.subTest(meter=name):
+                self.assertIsNotNone(getattr(self.bar, name, None))
+
+    def test_the_microphone_cannot_move_the_system_meter(self) -> None:
+        """The whole bug, in one assertion."""
+        self.bar.set_mic_level(0.9)
+        self.bar.set_system_level(0.0)
+        self.assertGreater(self.bar.meter.level(), 0.5)
+        self.assertEqual(self.bar.system_meter.level(), 0.0)
+
+    def test_and_the_system_sound_cannot_move_the_microphone_s(self) -> None:
+        self.bar.set_system_level(0.9)
+        self.bar.set_mic_level(0.0)
+        self.assertGreater(self.bar.system_meter.level(), 0.5)
+        self.assertEqual(self.bar.meter.level(), 0.0)
+
+    def test_both_rows_are_fed(self) -> None:
+        self.bar.set_mic_level(0.7)
+        self.bar.set_system_level(0.4)
+        self.assertGreater(self.bar.meter_rec.level(), 0.5)
+        self.assertGreater(self.bar.system_meter_rec.level(), 0.3)
+
+    def test_each_meter_follows_its_own_toggle(self) -> None:
+        self.bar.set_toggles(mic=True, system=False, clicks=True)
+        self.assertTrue(self.bar.meter._active)
+        self.assertFalse(self.bar.system_meter._active)
+        self.bar.set_toggles(mic=False, system=True, clicks=True)
+        self.assertFalse(self.bar.meter._active)
+        self.assertTrue(self.bar.system_meter._active)
+
+    def test_pressing_a_toggle_greys_its_own_meter(self) -> None:
+        self.bar.set_toggles(mic=True, system=True, clicks=True)
+        self.bar.system_button.click()
+        self.assertFalse(self.bar.system_meter._active)
+        self.assertTrue(self.bar.meter._active, "the microphone was not touched")
 

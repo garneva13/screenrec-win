@@ -179,6 +179,10 @@
       the recording row. If the sound moves to another device mid-recording, the
       recording follows it — and if you picked a device by name and it falls silent,
       the bar says where the sound is going instead.</p>
+      <p>A playback device that will not open <strong>never costs you the
+      recording</strong>: the screen and the microphone are recorded anyway and the bar
+      says which track is missing and why. Your device is remembered by name, so it is
+      still the one you chose after the computer’s devices change.</p>
     </div>
     <div class="card">
       <h3>A smaller file</h3>
@@ -238,7 +242,7 @@
 
   <h2>Installing</h2>
   <ol class="steps">
-    <li>Download <code>ScreenRec-0.3.0-setup.exe</code> from
+    <li>Download <code>ScreenRec-0.3.2-setup.exe</code> from
       <a href="https://github.com/garneva13/screenrec-win/releases">Releases</a> and run it.</li>
     <li>Windows will warn you — the installer is not code-signed yet. Click
       <strong>More info</strong>, then <strong>Run anyway</strong>. The release notes carry
@@ -307,6 +311,14 @@
     Display scaling: the settings window was checked at 125 %, 150 % and 200 %, where it
     scrolls rather than clipping — the rest of the interface has only ever run at
     100 %, because both of the author's screens are.</p>
+  </details>
+  <details>
+    <summary>A device plugged in while ScreenRec is running is not seen until it restarts</summary>
+    <p>The audio library builds its list of devices once, when it starts. So a headset
+    connected after ScreenRec was launched cannot be recorded until ScreenRec is
+    launched again. It no longer costs you a recording — the default device is recorded
+    instead and the program says so — but it is a real limit and it is the library’s,
+    not a setting you can change.</p>
   </details>
   <details>
     <summary>Windows only</summary>

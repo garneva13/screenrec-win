@@ -19,7 +19,7 @@ the frame rate it is really achieving:
 
 ## Installing
 
-Download `ScreenRec-0.3.0-setup.exe` from [Releases](../../releases) and run it. It
+Download `ScreenRec-0.3.2-setup.exe` from [Releases](../../releases) and run it. It
 installs both programs into `C:\Program Files\ScreenRec`, puts **ScreenRec** and
 **ScreenRec Player** in the Start menu, and asks once where recordings should go.
 Nothing else is needed: ffmpeg is inside.

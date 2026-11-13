@@ -653,3 +653,69 @@ class DshowParsingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeviceInfoTest(unittest.TestCase):
+    """Which endpoint gets captured when the one that was asked for is not there.
+
+    PortAudio numbers its devices in the order it found them when it started, so a
+    saved index names a different endpoint - or none - as soon as the set of devices
+    changes. `paInvalidDevice`, errno -9996, is what that looks like, and on
+    2026-11-13 it stopped a recording from happening at all.
+    """
+
+    class _Audio:
+        """PortAudio as `_device_info` uses it: two calls, either of which may fail."""
+
+        def __init__(self, by_index=None, default=None) -> None:
+            self._by_index = by_index
+            self._default = default
+            self.asked_for_default = False
+
+        def get_device_info_by_index(self, index):
+            if self._by_index is None:
+                raise OSError(-9996, "Invalid device info")
+            return dict(self._by_index, index=index)
+
+        def get_default_wasapi_loopback(self):
+            self.asked_for_default = True
+            if self._default is None:
+                raise OSError(-9996, "Invalid device info")
+            return self._default
+
+    def _feeder(self, device_index=-1):
+        return audio.LoopbackFeeder(r"\.\pipe\screenrec_device_test", device_index)
+
+    def test_the_chosen_device_is_used_when_it_is_there(self) -> None:
+        stack = self._Audio(by_index={"name": "Speakers"}, default={"name": "Other"})
+        feeder = self._feeder(7)
+        self.assertEqual(feeder._device_info(stack)["name"], "Speakers")
+        self.assertFalse(stack.asked_for_default)
+        self.assertFalse(feeder.fell_back)
+
+    def test_a_chosen_device_that_has_gone_falls_back_to_the_default(self) -> None:
+        stack = self._Audio(by_index=None, default={"name": "Speakers", "index": 3})
+        feeder = self._feeder(7)
+        info = feeder._device_info(stack)
+        self.assertEqual(info["index"], 3, "the default is recorded instead")
+        self.assertTrue(feeder.fell_back, "and the user is told which one it was")
+        self.assertEqual(feeder.error, "", "a substitution is not a failure")
+
+    def test_no_endpoint_at_all_is_said_in_words(self) -> None:
+        feeder = self._feeder(-1)
+        self.assertIsNone(feeder._device_info(self._Audio(default=None)))
+        self.assertEqual(feeder.reason, audio.REASON_NO_DEVICE)
+        self.assertIn("playback device", feeder.error)
+        self.assertIn(
+            "picture and the microphone", feeder.error,
+            "it has to say what is NOT lost, or it reads like the take is ruined",
+        )
+
+    def test_the_first_failure_is_the_one_kept(self) -> None:
+        """These cascade: a dead device makes the pipe time out, which makes the
+        shutdown complain. The first is the one that explains the rest."""
+        feeder = self._feeder(-1)
+        feeder._fail(audio.REASON_NO_DEVICE, "first")
+        feeder._fail(audio.REASON_PIPE_FAILED, "second")
+        self.assertEqual(feeder.error, "first")
+        self.assertEqual(feeder.reason, audio.REASON_NO_DEVICE)

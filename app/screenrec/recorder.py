@@ -18,6 +18,7 @@ of passing more of them, not of rewriting this module.
 """
 from __future__ import annotations
 
+import dataclasses
 import subprocess
 import threading
 import time
@@ -528,6 +529,13 @@ class Recorder:
         self.log: deque[str] = deque(maxlen=200)
         self.error: str = ""
         self.callback_error: str = ""
+        #: Why system sound is not in this recording, when it was asked for and could
+        #: not be had. "" when it is there, or was never asked for. A sentence for the
+        #: user, not an errno: see `start`.
+        self.dropped_audio: str = ""
+        #: The `audio.REASON_*` code beside it, so `ui/app.py` can say it in the
+        #: user's language - `audio.py` is Qt-free and cannot translate itself.
+        self.dropped_reason: str = ""
         self.command: list[str] = []
         self._on_progress = None
         self._threads: list[threading.Thread] = []
@@ -577,6 +585,8 @@ class Recorder:
         self.log.clear()
         self.error = ""
         self.callback_error = ""
+        self.dropped_audio = ""
+        self.dropped_reason = ""
         self._on_progress = on_progress
         self._threads = []
         self._settle_by = 0.0
@@ -596,10 +606,21 @@ class Recorder:
             self.feeder.start()
             time.sleep(0.15)
             if self.feeder.error:
-                error = self.feeder.error
+                # **System sound is not worth a recording.** This used to `return` the
+                # feeder's error, and the whole take never happened: on 2026-11-13 the
+                # user pressed record, watched the countdown, and got
+                # `No system-sound device available: [Errno -9996] Invalid device info`
+                # and no file - though the screen and the microphone were both ready
+                # and would have recorded perfectly. One optional track must never take
+                # the other two down with it. So the pipe is dropped from the plan, the
+                # recording goes ahead without system sound, and the reason is carried
+                # in `dropped_audio` for the bar to say at the start and again at the end.
+                self.dropped_audio = self.feeder.error
+                self.dropped_reason = self.feeder.reason
                 self.feeder.stop()
                 self.feeder = None
-                return error
+                plan = dataclasses.replace(plan, loopback_pipe="")
+                self.plan = plan
 
         try:
             self.command = build_command(
@@ -883,6 +904,8 @@ class RecordingSession:
         #: What `_end_segment` found worth telling the user. `ui/app.py` reads it
         #: when the recording stops.
         self.feeder_note: str = ""
+        #: The `audio.REASON_*` code behind `feeder_note`, when there is one.
+        self.feeder_reason: str = ""
         #: The segment a `wait=False` start launched and `settle` has still to answer
         #: for, with whether the take was paused before it: a start that turns out to
         #: have failed must leave the session exactly where it found it.
@@ -902,6 +925,21 @@ class RecordingSession:
     def active(self) -> bool:
         """Started and not yet stopped, whether or not it is paused right now."""
         return self.recording or self._paused
+
+    @property
+    def dropped_audio(self) -> str:
+        """Why the running segment has no system sound, though it was asked for.
+
+        Read by the bar the moment a recording starts, so that a take missing a track
+        says so while it can still be restarted - rather than at the end, when the
+        thing that was being recorded is over.
+        """
+        return self.recorder.dropped_audio if self.recorder is not None else ""
+
+    @property
+    def dropped_reason(self) -> str:
+        """The `audio.REASON_*` code behind `dropped_audio`, for translation."""
+        return self.recorder.dropped_reason if self.recorder is not None else ""
 
     @property
     def segments(self) -> int:
@@ -1071,7 +1109,8 @@ class RecordingSession:
         self._describe(plan)
 
         shape = self._shape_of(plan)
-        if self._shape is None:
+        first = self._shape is None
+        if first:
             self._shape = shape
         elif shape != self._shape:
             # A take is one file and `takes.finish` joins it with `-c copy`, which
@@ -1105,6 +1144,14 @@ class RecordingSession:
             self.recorder = None
             self.error = problem
             return problem
+        if first and self.recorder.plan is not None:
+            # The take's contract is what was *recorded*, not what was planned. The
+            # recorder may drop system sound when its device will not open (see
+            # `Recorder.start`), and a first segment written without it followed by a
+            # resumed one written with it is two different files that `-c copy` cannot
+            # join. Re-fixing the shape here makes that mismatch refuse itself, with
+            # the sentence `_describe_shape` already writes.
+            self._shape = self._shape_of(self.recorder.plan)
         self.take.add(segment)
         if not wait:
             self._settling = (segment, was_paused)
@@ -1156,15 +1203,48 @@ class RecordingSession:
         else:
             self._banked_bytes += banked.size_bytes
         self.feeder_note = self._feeder_note(recorder)
+        self.feeder_reason = self._feeder_reason(recorder)
         return problem
 
     @staticmethod
+    def _feeder_reason(recorder: Recorder) -> str:
+        """The `audio.REASON_*` code for whatever `_feeder_note` just said.
+
+        The same order as `_feeder_note`, and it has to stay the same order: a note
+        and a reason that disagree would show the user a translated sentence about a
+        different failure from the one that happened.
+        """
+        if recorder.dropped_audio:
+            return recorder.dropped_reason
+        feeder = recorder.feeder
+        if feeder is None:
+            return ""
+        if feeder.error:
+            return feeder.reason
+        if feeder.fell_back:
+            return audio_mod.REASON_FELL_BACK
+        return ""
+
+    @staticmethod
     def _feeder_note(recorder: Recorder) -> str:
+        if recorder.dropped_audio:
+            # The take went ahead without system sound rather than not happening at
+            # all; the reason is said once at the start and once here, because a
+            # recording that is missing a track should not be a surprise on playback.
+            return recorder.dropped_audio
         feeder = recorder.feeder
         if feeder is None:
             return ""
         if feeder.error:
             return feeder.error
+        if feeder.fell_back:
+            # Sound was recorded, but not from the endpoint the user picked - theirs
+            # had gone and the default was taken instead. Said, because the whole
+            # point of picking one is knowing which one you got.
+            return (
+                "The playback device chosen for system sound was not available, so "
+                "the current default one was recorded instead."
+            )
         if feeder.frames_written == 0:
             return _("System sound was on but no audio arrived.")
         if feeder.audible_frames == 0:

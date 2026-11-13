@@ -194,6 +194,63 @@ def list_loopback_devices() -> list[LoopbackDevice]:
     return found
 
 
+def index_for_label(label: str, devices: list | None = None) -> int:
+    """The PortAudio index of the playback endpoint Windows calls `label`, or -1.
+
+    **The name is what identifies an endpoint; the index is not.** PortAudio numbers
+    devices in the order it finds them when it starts, so plugging a speaker in
+    renumbers everything after it: an index saved in one session names a different
+    device in the next, or none at all. A user found the settings window sitting on
+    `Device 21 (not found)` that way, with nothing recorded until they picked a device
+    by hand.
+
+    -1 means the name is not among the endpoints that can be recorded right now -
+    which is also what PortAudio answers for a device that appeared after it started,
+    since it enumerates once. The caller decides what to do about it; this never
+    guesses at a near match, because recording the wrong endpoint is silent and is
+    exactly the failure that costs a recording.
+    """
+    if not label:
+        return -1
+    try:
+        for device in (list_loopback_devices() if devices is None else devices):
+            if device.label == label:
+                return device.index
+    except Exception:  # noqa: BLE001 - somebody else's audio stack
+        return -1
+    return -1
+
+
+def label_for_index(index: int, devices: list | None = None) -> str:
+    """The Windows name of the endpoint at `index`, or "". The reverse of the above."""
+    if index < 0:
+        return ""
+    try:
+        for device in (list_loopback_devices() if devices is None else devices):
+            if device.index == index:
+                return device.label
+    except Exception:  # noqa: BLE001
+        return ""
+    return ""
+
+
+# -------------------------------------------------------------- failure reasons
+#
+# This module cannot translate - see the note at the top of the file - so every failure
+# a user is likely to meet carries a short machine-readable reason beside its English
+# sentence. `ui/app.py` turns the reason into a translated sentence and falls back to
+# the English one for anything it does not recognise, which is how a Russian bar came
+# to show `No system-sound device available: [Errno -9996] Invalid device info` on
+# 2026-11-13. Add a reason here and its sentence there; never one without the other.
+REASON_NO_PYAUDIO = "no-pyaudio"
+REASON_NO_DEVICE = "no-device"
+REASON_FFMPEG_TIMEOUT = "ffmpeg-timeout"
+REASON_PIPE_REFUSED = "pipe-refused"
+REASON_PIPE_FAILED = "pipe-failed"
+REASON_CAPTURE_FAILED = "capture-failed"
+REASON_FELL_BACK = "fell-back"
+
+
 def default_loopback_index() -> int:
     if not portaudio.available():
         return -1
@@ -228,6 +285,14 @@ class LoopbackFeeder:
         #: caller to report, and for a test to prove it happened at all.
         self.switches = 0
         self.error: str = ""
+        #: One of the `REASON_*` constants, beside `error`, so that `ui/app.py` can say
+        #: the same thing in the user's language. "" when `error` is "" or when the
+        #: failure is one nobody has written a translated sentence for.
+        self.reason: str = ""
+        #: Whether the chosen device had gone and the default was recorded instead.
+        #: Not a failure - a recording happened - but the user asked for one endpoint
+        #: and got another, and is told so rather than finding out on playback.
+        self.fell_back = False
         self.frames_written = 0
         self.silence_frames = 0  # how much had to be invented to keep the clock
         #: Frames that carried something. A track can be full of real, flowing,
@@ -329,6 +394,18 @@ class LoopbackFeeder:
                 "before recording system sound again."
             )
 
+    def _fail(self, reason: str, text: str) -> None:
+        """Record the first failure, in English and as a reason. Later ones are noise.
+
+        Only the first is kept because the failures cascade: a device that will not
+        open makes the pipe time out, which makes the shutdown complain. The first one
+        is the one that explains the others.
+        """
+        if self.error:
+            return
+        self.error = text
+        self.reason = reason
+
     @property
     def seconds_written(self) -> float:
         return self.frames_written / SAMPLE_RATE
@@ -355,13 +432,15 @@ class LoopbackFeeder:
             if code == ERROR_PIPE_BUSY:
                 # Not this process any more - `stop` now gives the handle back - so it
                 # is a second copy of ScreenRec, or one that was killed outright.
-                self.error = (
+                self._fail(
+                    REASON_PIPE_REFUSED,
                     "The channel ScreenRec uses for system sound is still held by "
                     "something else. Close any other copy of ScreenRec and start the "
                     "recording again; if there is no other copy, restart ScreenRec."
                 )
             else:
-                self.error = (
+                self._fail(
+                    REASON_PIPE_FAILED,
                     f"The channel for system sound could not be opened (Windows error "
                     f"{code}). Record with system sound switched off, or restart "
                     f"ScreenRec and try again."
@@ -374,7 +453,10 @@ class LoopbackFeeder:
         try:
             import pyaudiowpatch as pyaudio
         except ImportError:
-            self.error = "pyaudiowpatch is not installed; system sound cannot be captured."
+            self._fail(
+                REASON_NO_PYAUDIO,
+                "pyaudiowpatch is not installed; system sound cannot be captured.",
+            )
             return
 
         if self._stop.is_set():
@@ -422,17 +504,41 @@ class LoopbackFeeder:
                     self.switches += 1
         except Exception as exc:  # PortAudio raises plain OSError subclasses
             if not self.error:
-                self.error = f"System sound capture failed: {exc}"
+                self._fail(REASON_CAPTURE_FAILED, f"System sound capture failed: {exc}")
         finally:
             self._close_pipe()
 
     def _device_info(self, audio) -> dict | None:
-        try:
-            if self.device_index >= 0:
+        """The endpoint to capture, or None with `error` and `reason` set.
+
+        A **chosen** device that will not open falls through to the default rather than
+        ending the capture: PortAudio numbers its devices in the order it found them
+        when it started, so an index that named the right endpoint yesterday can name a
+        different one today, or none at all. That is `paInvalidDevice`, errno -9996,
+        and `fell_back` is set so the caller can say which device was really recorded.
+
+        Only when the default will not open either is there nothing to record, and the
+        sentence then says what the user can do about it - it used to read
+        `No system-sound device available: [Errno -9996] Invalid device info`, which
+        told them nothing and, worse, stopped the recording from happening at all.
+        """
+        if self.device_index >= 0:
+            try:
                 return audio.get_device_info_by_index(self.device_index)
+            except Exception:  # noqa: BLE001 - somebody else's audio stack
+                self.fell_back = True
+        try:
             return audio.get_default_wasapi_loopback()
-        except Exception as exc:
-            self.error = f"No system-sound device available: {exc}"
+        except Exception as exc:  # noqa: BLE001
+            self._fail(
+                REASON_NO_DEVICE,
+                f"Windows is not offering a playback device that can be recorded, so "
+                f"this recording has no system sound - the picture and the microphone "
+                f"are unaffected. This usually means a playback device has just gone "
+                f"away, a headset switching off for instance. Pick one under "
+                f"Settings, Sound, or start the recording again once Windows has "
+                f"settled on a device. ({exc})",
+            )
             return None
 
     def _wait_for_ffmpeg(self, stream) -> bool:
@@ -506,7 +612,8 @@ class LoopbackFeeder:
             self.connected.set()
             return True
         if timed_out:
-            self.error = (
+            self._fail(
+                REASON_FFMPEG_TIMEOUT,
                 f"ffmpeg did not pick up the system sound within "
                 f"{CONNECT_TIMEOUT:g} seconds, so this recording has no system "
                 f"sound - the picture and the microphone are unaffected. Start the "
@@ -517,7 +624,8 @@ class LoopbackFeeder:
             # 995 is `stop` cancelling this wait, which is not a failure to report.
             # Anything else is Windows turning the connection down, and the old code
             # ignored the return value entirely and pumped audio into nothing.
-            self.error = (
+            self._fail(
+                REASON_PIPE_REFUSED,
                 f"Windows would not let ffmpeg onto the system-sound channel (error "
                 f"{refusal[0]}), so this recording has no system sound. Start the "
                 f"recording again, or switch system sound off."

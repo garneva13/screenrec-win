@@ -90,6 +90,12 @@ RUSSIAN: dict[str, str] = {
     "Default playback device ({name})": "Устройство по умолчанию ({name})",
     "{name} (not found)": "{name} (не найден)",
     "Device {index} (not found)": "Устройство {index} (не найдено)",
+    # The playback device that was chosen is not on the machine right now. The choice
+    # is kept, so it comes back on its own when the device does; meanwhile the
+    # default is recorded, which is what this says.
+    "“{name}” is not available, so the default playback device is being recorded.":
+        "«{name}» недоступно, поэтому записывается устройство воспроизведения по "
+        "умолчанию.",
     "Mixed into one": "Смешать в одну",
     "Two separate": "Две отдельные",
     "None": "Нет",
@@ -128,6 +134,14 @@ RUSSIAN: dict[str, str] = {
         "язык при следующем запуске.",
     "Two tracks need both the microphone and the system sound.":
         "Для двух дорожек нужны и микрофон, и звук системы.",
+    "A device is remembered by name, so it is still the one chosen after the "
+    "computer's devices change. While it is away the default is recorded, and a "
+    "device that cannot be opened never stops a recording: the screen and the "
+    "microphone are recorded anyway.":
+        "Устройство запоминается по имени, поэтому остаётся выбранным и после того, "
+        "как набор устройств на компьютере изменился. Пока его нет, записывается "
+        "устройство по умолчанию, а устройство, которое не открылось, никогда не "
+        "срывает запись: экран и микрофон всё равно записываются.",
     "No microphone was found on this machine.":
         "Микрофон на этом компьютере не найден.",
     "Estimated {rate} MB a minute at {width}×{height} ({gigabytes} GB an "

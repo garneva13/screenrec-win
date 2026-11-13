@@ -29,6 +29,7 @@ from .. import capabilities
 from .. import endpoints as endpoints_mod
 from .. import config as config_mod
 from .. import encoders as encoders_mod
+from .. import errorlog
 from .. import levels as levels_mod
 from .. import multi as multi_mod
 from .. import paths, presets as presets_mod, recorder, shellops, storage
@@ -819,12 +820,16 @@ class Application(QtCore.QObject):
             # the same reason for naming the default: see `_default_loopback_label`.
             default = menu.addAction(self._default_loopback_label())
             default.setCheckable(True)
-            default.setChecked(self.settings.system_audio_device < 0)
+            # Ticked by name, like everything else here: the saved index can point
+            # at another device after a renumbering, and a menu that ticks the wrong
+            # line is worse than one that ticks none. See `audio.index_for_label`.
+            chosen = self._chosen_loopback_index()
+            default.setChecked(chosen < 0)
             default.triggered.connect(lambda: self._choose_loopback(-1))
             for device in self.loopbacks:
                 action = menu.addAction(device.label)
                 action.setCheckable(True)
-                action.setChecked(device.index == self.settings.system_audio_device)
+                action.setChecked(device.index == chosen)
                 action.triggered.connect(
                     lambda _checked, d=device: self._choose_loopback(d.index)
                 )
@@ -903,6 +908,12 @@ class Application(QtCore.QObject):
 
     def _choose_loopback(self, index: int) -> None:
         self.settings.system_audio_device = index
+        # The name beside the number, because the number is not what identifies an
+        # endpoint - see `audio.index_for_label`. "" for the default, which is not a
+        # device at all but "whatever Windows is using", and must stay that way.
+        self.settings.system_audio_label = audio_mod.label_for_index(
+            index, self.loopbacks
+        )
         self.settings.system_audio_enabled = True
         self._save()
         self._refresh_bar()
@@ -1053,13 +1064,39 @@ class Application(QtCore.QObject):
         answer costs 17 ms and a start-stop of PortAudio underneath a running capture -
         measured on 2026-11-13 against 1.3 ms for the name.
         """
-        if self.settings.system_audio_device >= 0:
-            return self.settings.system_audio_device
+        chosen = self._chosen_loopback_index()
+        if chosen >= 0:
+            return chosen
         if self.endpoints is not None:
             index = self._loopback_index_named(self.endpoints.default_name())
             if index >= 0:
                 return index
         return audio_mod.default_loopback_index()
+
+    def _chosen_loopback_index(self) -> int:
+        """The endpoint the user picked, by name, or -1 for "follow Windows".
+
+        The name wins over the saved index whenever there is one: PortAudio renumbers
+        its devices whenever the set of them changes, so the index alone is a promise
+        it cannot keep. A settings file written before the name existed has only the
+        index, and that is still honoured - but a name that no longer matches anything
+        means the device has gone, and -1 sends the caller to the current default
+        rather than to whatever now happens to sit at that number.
+        """
+        settings = self.settings
+        label = getattr(settings, "system_audio_label", "")
+        if label:
+            return audio_mod.index_for_label(label, self.loopbacks)
+        if settings.system_audio_device >= 0:
+            # An older settings file. Give it a name now, so the next renumbering
+            # cannot take the device away again.
+            name = audio_mod.label_for_index(
+                settings.system_audio_device, self.loopbacks
+            )
+            if name:
+                settings.system_audio_label = name
+            return settings.system_audio_device
+        return -1
 
     def _loopback_index_named(self, name: str) -> int:
         """The PortAudio index of the endpoint Windows calls `name`, or -1.
@@ -1082,20 +1119,9 @@ class Application(QtCore.QObject):
 
     def _loopback_name(self) -> str:
         """The Windows name of the endpoint currently being captured, or ""."""
-        index = (
-            self.settings.system_audio_device
-            if self.settings.system_audio_device >= 0
-            else self._loopback_index()
-        )
-        if index < 0:
-            return ""
-        try:
-            for device in audio_mod.list_loopback_devices():
-                if device.index == index:
-                    return device.label
-        except Exception:  # noqa: BLE001
-            return ""
-        return ""
+        chosen = self._chosen_loopback_index()
+        index = chosen if chosen >= 0 else self._loopback_index()
+        return audio_mod.label_for_index(index)
 
     # ------------------------------------------------- where the sound goes
 
@@ -1103,7 +1129,9 @@ class Application(QtCore.QObject):
         """Every `ENDPOINT_MS`: is the sound still going where we are recording?"""
         if self.endpoints is None or not self.settings.system_audio_enabled:
             return
-        if self.settings.system_audio_device < 0:
+        # "Follow Windows" is the absence of a chosen device, and a chosen device
+        # that has gone is the same thing again - there is nothing left to be loyal to.
+        if self._chosen_loopback_index() < 0:
             self._follow_default()
         else:
             self._advise_on_silence()
@@ -1631,16 +1659,127 @@ class Application(QtCore.QObject):
         if self.countdown_left <= 0:
             self.countdown_timer.stop()
 
-    def _really_start(self) -> None:
-        if self.session is not None and self.session.active:
-            return  # the ring and the tick can both arrive; starting twice must not happen
-        # Everything the program draws now goes out of the capture, and comes back
-        # into it when the take ends: `surfaces.set_recording`. Before the overlays go
-        # up, so a surface shown after this picks the state up on its own.
+    def _hide_from_capture(self) -> None:
+        """Take the program's own windows out of every screen capture, for the take.
+
+        They come back in `_hide_overlays`, which every path that ends a take goes
+        through. **Called once a take has really started, never before it.** It used to
+        run at the top of `_really_start`, before the session existed, and nothing put
+        it back when the start failed. On 2026-11-13 a start refused by a dead sound
+        device left the bar invisible to every capture on the machine for the rest of
+        the session: the user could see the error it was showing but could not
+        photograph it, and had to take a picture of the screen with a phone to show
+        anyone. Every later take fixed it by accident, and every later failure made it
+        worse.
+        """
         surfaces.set_recording(True)
         if self.panel is not None:
             # The gear is on the bar, so the window can be open when a take begins.
             self.panel.set_recording(True)
+
+    def _clear_the_way(self) -> bool:
+        """Whether a new take may begin. Says why when it may not.
+
+        The old guard was `if self.session is not None and self.session.active:
+        return`, and it read both sessions' `active` as proof that a take is running.
+        Today that is sound - `RecordingSession.active` is `recording or paused` by
+        definition, and `MultiSession.active` is the same over its screens - so a
+        session that only *claims* to be running cannot occur, and the last branch
+        here is reached by nothing in this build.
+
+        It is written anyway, because the cost of being wrong is not symmetrical. A
+        guard that returns in silence turns any future mistake about what `active`
+        means into a record button that does nothing and says nothing, which is the
+        single hardest symptom to diagnose in this program - it took most of a day on
+        2026-11-13 to rule out, and the actual cause was elsewhere entirely (see
+        `Recorder.start`). Running and paused takes are still left alone in silence,
+        because the ring and its tick really do both arrive; anything else is said.
+        """
+        session = self.session or self.multi
+        if session is None:
+            return True
+        if session.recording or session.paused:
+            return False  # a real take; the ring and the tick both arriving is normal
+        if not session.active:
+            return True  # finished and not cleared up; nothing to say about it
+        self.session = None
+        self.multi = None
+        surfaces.set_recording(False)
+        if self.panel is not None:
+            self.panel.set_recording(False)
+        self._say(
+            lambda: _("The last recording did not end cleanly. Starting a new one."),
+            warn=True,
+        )
+        return True
+
+    def _say_dropped_audio(self, session) -> None:
+        """Say, as the take begins, that it is going out without system sound.
+
+        `Recorder.start` drops the system-sound track rather than refusing to record
+        when its device will not open. That is the right trade - a recording missing
+        one track beats no recording - but it has to be said at once, while the user
+        can still stop and fix it, and not only when the file is saved.
+        """
+        reason = getattr(session, "dropped_audio", "")
+        if not reason:
+            return
+        code = getattr(session, "dropped_reason", "")
+        self._say(lambda: self._audio_reason(code, reason), warn=True)
+
+    @staticmethod
+    def _audio_reason(code: str, english: str) -> str:
+        """A translated sentence for one of `audio.REASON_*`, or the English one.
+
+        `audio.py` and `levels.py` are deliberately Qt-free and so cannot reach
+        `i18n._()`; their sentences arrive here in English and are turned round here.
+        That hole is how a Russian bar came to read `No system-sound device available:
+        [Errno -9996] Invalid device info` on 2026-11-13. A reason with no sentence
+        below falls through to the English, which is worse than a translation and much
+        better than nothing.
+        """
+        sentences = {
+            audio_mod.REASON_NO_DEVICE: lambda: _(
+                "Windows is not offering a playback device that can be recorded, so "
+                "this recording has no system sound - the picture and the microphone "
+                "are not affected. A playback device has usually just gone away, a "
+                "headset switching off for instance. Choose one in Settings, Sound."
+            ),
+            audio_mod.REASON_NO_PYAUDIO: lambda: _(
+                "System sound cannot be captured: the sound library is missing from "
+                "this copy of ScreenRec. The picture and the microphone are not "
+                "affected."
+            ),
+            audio_mod.REASON_FFMPEG_TIMEOUT: lambda: _(
+                "System sound did not start in time, so this recording has no system "
+                "sound - the picture and the microphone are not affected. Start the "
+                "recording again, or switch system sound off."
+            ),
+            audio_mod.REASON_PIPE_REFUSED: lambda: _(
+                "The channel ScreenRec uses for system sound is held by something "
+                "else, so this recording has no system sound. Close any other copy of "
+                "ScreenRec; if there is none, restart ScreenRec."
+            ),
+            audio_mod.REASON_PIPE_FAILED: lambda: _(
+                "The channel for system sound could not be opened, so this recording "
+                "has no system sound. Restart ScreenRec, or record with system sound "
+                "switched off."
+            ),
+            audio_mod.REASON_FELL_BACK: lambda: _(
+                "The playback device chosen for system sound was not available, so "
+                "the current default one was recorded instead."
+            ),
+            audio_mod.REASON_CAPTURE_FAILED: lambda: _(
+                "Capturing system sound failed, so this recording has no system "
+                "sound - the picture and the microphone are not affected."
+            ),
+        }
+        make = sentences.get(code)
+        return make() if make is not None else english
+
+    def _really_start(self) -> None:
+        if not self._clear_the_way():
+            return
         self._pending_start = False
         self.countdown.cancel()
         self.bar.set_countdown(0)
@@ -1686,10 +1825,12 @@ class Application(QtCore.QObject):
             self.bar.set_recording(False)
             return
 
+        self._hide_from_capture()
         self._show_overlays()
         self.bar.set_recording(True)
         self.tray.set_recording(True)
         self._say(lambda: _("Recording to {name}").format(name=final.name))
+        self._say_dropped_audio(self.session)
         self._flush_encoder_note()
         self.timer.start()
         if self.settings.auto_stop_minutes > 0:
@@ -1737,9 +1878,11 @@ class Application(QtCore.QObject):
             self.bar.set_recording(False)
             return
         self.multi = session
+        self._hide_from_capture()
         self._show_overlays()
         self.bar.set_recording(True)
         self.tray.set_recording(True)
+        self._say_dropped_audio(session)
         count = len(sources)
         self._say(
             lambda: _("Recording {count} {word} to {pattern}").format(
@@ -1924,10 +2067,13 @@ class Application(QtCore.QObject):
         # left on the bar was the "Saved" line. `feeder_note` is `audio.py`'s own
         # finding that there is no sound in the recording at all, and it held the bar
         # for microseconds. See `_say_each`.
+        note = getattr(session, "feeder_note", "")
+        if note:
+            # Said in the user's language where `audio.py` gave a reason code for it;
+            # that module is Qt-free and cannot translate its own sentences.
+            note = self._audio_reason(getattr(session, "feeder_reason", ""), note)
         reasons: list[tuple[str | Callable[[], str], bool]] = [
-            (line, True)
-            for line in (getattr(session, "feeder_note", ""), problem)
-            if line
+            (line, True) for line in (note, problem) if line
         ]
         if path is None:
             self._say_now_then_queue(reasons)
@@ -2431,6 +2577,10 @@ class Application(QtCore.QObject):
 
 
 def run() -> int:
+    # First of all, before anything can throw: this build has no console, and Qt hands
+    # an exception raised in a slot to `sys.excepthook` rather than letting it out, so
+    # without this a failure leaves the program running and silent. See `errorlog`.
+    errorlog.install()
     winapi.enable_dpi_awareness()
 
     # One copy only. Without this a second launch starts a rival that fights the first

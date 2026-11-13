@@ -684,6 +684,16 @@ class SettingsPanel(surfaces.FloatingSurface):
         layout.addWidget(self._row("Record what the computer plays", self.system_switch))
         self.system_combo = self._combo()
         layout.addWidget(self._field("Source", self.system_combo))
+        #: Which playback device was asked for and is not here. Said in the error
+        #: colour, because the recording will not be of the device they picked.
+        self.system_lost = ""
+        self.system_lost_note = self._problem("")
+        self.system_lost_note.setVisible(False)
+        layout.addWidget(self.system_lost_note)
+        # Said here because the opposite used to be true, and cost a recording: a
+        # device that would not open refused the whole take. See `Recorder.start`.
+        self.system_note = self._note("")
+        layout.addWidget(self.system_note)
         layout.addSpacing(22)
 
         self._group(layout, "Tracks")
@@ -1177,6 +1187,15 @@ class SettingsPanel(surfaces.FloatingSurface):
         self.tracks_note.setText(
             _("Two tracks need both the microphone and the system sound.")
         )
+        # Said because the opposite used to be true and cost a recording: a playback
+        # device that would not open refused the whole take. See `Recorder.start`.
+        self.system_note.setText(
+            _("A device is remembered by name, so it is still the one chosen after "
+              "the computer's devices change. While it is away the default is "
+              "recorded, and a device that cannot be opened never stops a "
+              "recording: the screen and the microphone are recorded anyway.")
+        )
+        self._show_system_lost()
         self.hotkey_hint.setText(
             _("Click a box and press the keys. Esc leaves it as it was.")
         )
@@ -1263,27 +1282,74 @@ class SettingsPanel(surfaces.FloatingSurface):
         return plain
 
     def _fill_system_combo(self) -> None:
+        """The Source list, and which line it opens on.
+
+        **A remembered endpoint that is not here falls back to the default.** It used
+        to get a line of its own, `Device 21 (not found)`, and the list opened on it;
+        the reasoning was that `audio.LoopbackFeeder` would fail on that index anyway,
+        so saying so beat quietly pretending. Both halves of that have gone: the
+        feeder now falls back to the default itself and reports it, and a device is
+        remembered by name, so "not here" means it has really gone rather than that
+        the numbers have moved. What was left was a window that opened on a dead
+        choice and recorded nothing until the user noticed and picked a device by
+        hand - which is how this was reported, on a machine where a speaker had been
+        plugged in since.
+        """
         self.system_combo.clear()
         self.system_combo.addItem(_("Off"), _OFF)
         self.system_combo.addItem(self._default_loopback_label(), -1)
         for device in self.loopbacks:
             self.system_combo.addItem(device.label, device.index)
+        self.system_lost = ""
         if self.settings.system_audio_enabled:
-            wanted = self.settings.system_audio_device
-            index = self.system_combo.findData(wanted)
-            if index < 0:
-                # The remembered endpoint is not here. Say so rather than quietly
-                # selecting the default: `audio.LoopbackFeeder` will fail on this index,
-                # and a panel that claims the default device hides the reason. Same
-                # treatment as a missing microphone, for the same reason.
-                self.system_combo.addItem(
-                    _("Device {index} (not found)").format(index=wanted), wanted
-                )
-                index = self.system_combo.count() - 1
+            # "Nothing chosen" and "what was chosen has gone" are both -1 from
+            # `_chosen_index`, and they are not the same thing: the first is the
+            # default on purpose, the second is a device to say something about. The
+            # name is what tells them apart.
+            label = getattr(self.settings, "system_audio_label", "")
+            wanted = self._chosen_index()
+            index = 1  # the default playback device
+            if label and wanted < 0:
+                # Only said once the devices are really known: an empty list before
+                # that means "not asked yet", and announcing a lost device then would
+                # be a lie about what the user chose. See `_adopt_shown_devices`.
+                if self._devices_known:
+                    self.system_lost = label
+            else:
+                found = self.system_combo.findData(wanted)
+                # An index with no name behind it - an old settings file - that no
+                # longer exists is simply replaced; there is no name to report.
+                index = found if found >= 0 else 1
             self.system_combo.setCurrentIndex(index)
         else:
             self.system_combo.setCurrentIndex(0)
         self.system_combo.setToolTip(self.system_combo.currentText())
+        self._show_system_lost()
+
+    def _chosen_index(self) -> int:
+        """The endpoint the settings ask for, by name, or -1 for "follow Windows".
+
+        The same rule as `Application._chosen_loopback_index`, and for the same
+        reason: PortAudio renumbers its devices whenever the set of them changes, so
+        the saved index is only a hint and the name is the thing. A settings file
+        written before the name existed has only the index, and that still counts.
+        """
+        label = getattr(self.settings, "system_audio_label", "")
+        if label:
+            return audio_mod.index_for_label(label, self.loopbacks)
+        return self.settings.system_audio_device
+
+    def _show_system_lost(self) -> None:
+        """Say which playback device went missing, when one did."""
+        if not hasattr(self, "system_lost_note"):
+            return
+        lost = getattr(self, "system_lost", "")
+        self.system_lost_note.setVisible(bool(lost))
+        if lost:
+            self.system_lost_note.setText(
+                _("“{name}” is not available, so the default playback device is "
+                  "being recorded.").format(name=lost)
+            )
 
     def _adopt_shown_devices(self) -> bool:
         """Make the `Settings` object agree with what the two combo boxes now show.
@@ -1336,12 +1402,24 @@ class SettingsPanel(surfaces.FloatingSurface):
                 settings.system_audio_enabled = False
                 wrote = True
         else:
-            index = int(data)
             if not settings.system_audio_enabled:
                 settings.system_audio_enabled = True
                 wrote = True
+            if getattr(self, "system_lost", ""):
+                # The chosen device is missing and the window is showing the default
+                # in its place. **Their choice is not overwritten.** A headset that is
+                # off for an hour is still the one they picked, and discarding the
+                # name here would mean picking it again every time it comes back;
+                # `_chosen_index` returns -1 while it is away, so the default is what
+                # gets recorded meanwhile, which is the whole point.
+                return wrote
+            index = int(data)
             if settings.system_audio_device != index:
                 settings.system_audio_device = index
+                wrote = True
+            label = audio_mod.label_for_index(index, self.loopbacks)
+            if settings.system_audio_label != label:
+                settings.system_audio_label = label
                 wrote = True
 
         return wrote
@@ -1710,6 +1788,13 @@ class SettingsPanel(surfaces.FloatingSurface):
         else:
             self.settings.system_audio_enabled = True
             self.settings.system_audio_device = int(data)
+            # The name is what will find this endpoint again next time; see
+            # `audio.index_for_label`. "" for the default, which is not a device.
+            self.settings.system_audio_label = audio_mod.label_for_index(
+                int(data), self.loopbacks
+            )
+            self.system_lost = ""
+            self._show_system_lost()
         self.system_combo.setToolTip(self.system_combo.currentText())
         self.system_switch.set_checked_now(bool(self.settings.system_audio_enabled))
         self._update_enabled()

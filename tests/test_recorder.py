@@ -1354,6 +1354,11 @@ class _FakeRecorder:
         self.running = False
         self.progress = rec.Progress()
         self.feeder = None
+        #: The real `Recorder` drops system sound rather than refusing to record when
+        #: its device will not open, and says why here. A double without these two
+        #: is not a `Recorder` as `RecordingSession` uses one.
+        self.dropped_audio = ""
+        self.dropped_reason = ""
         self.log = []
         #: Whether this one was launched with the start grace deferred, and how many
         #: times `settle` was asked for the verdict.
@@ -1767,14 +1772,22 @@ class WhatTheSystemSoundTrackActuallyGotTest(unittest.TestCase):
     feeder keeps, and it is what the bar says when a take ends."""
 
     class _Feeder:
-        def __init__(self, error="", frames_written=0, audible_frames=0) -> None:
+        def __init__(
+            self, error="", frames_written=0, audible_frames=0, reason="",
+            fell_back=False,
+        ) -> None:
             self.error = error
+            self.reason = reason
             self.frames_written = frames_written
             self.audible_frames = audible_frames
+            #: The chosen endpoint had gone and the default was recorded instead.
+            self.fell_back = fell_back
 
     class _Recorder:
-        def __init__(self, feeder) -> None:
+        def __init__(self, feeder, dropped="", reason="") -> None:
             self.feeder = feeder
+            self.dropped_audio = dropped
+            self.dropped_reason = reason
 
     def _note(self, feeder) -> str:
         return rec.RecordingSession._feeder_note(self._Recorder(feeder))
@@ -1809,3 +1822,125 @@ class WhatTheSystemSoundTrackActuallyGotTest(unittest.TestCase):
         )
         self.assertEqual(note, "the device vanished")
 
+
+
+class SystemSoundIsNotWorthARecordingTest(unittest.TestCase):
+    """A system-sound device that will not open must not cost the whole take.
+
+    On 2026-11-13 the user pressed record, watched the countdown, and got
+    `No system-sound device available: [Errno -9996] Invalid device info` with no
+    file at all - though the screen and the microphone were both ready. `start` now
+    drops the track and records; these pin that down, because the wrong behaviour
+    looked perfectly reasonable in the code that had it.
+    """
+
+    class _Feeder:
+        """A `LoopbackFeeder` that fails on `start`, as a dead endpoint does."""
+
+        def __init__(self, pipe_name, device_index=-1) -> None:
+            self.pipe_name = pipe_name
+            self.device_index = device_index
+            self.error = ""
+            self.reason = ""
+            self.fell_back = False
+            self.frames_written = 0
+            self.audible_frames = 0
+            self.stopped = False
+
+        def start(self) -> None:
+            self.error = "the endpoint is gone"
+            self.reason = rec.audio_mod.REASON_NO_DEVICE
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    def setUp(self) -> None:
+        self.made: list = []
+
+        def feeder(pipe_name, device_index=-1):
+            made = self._Feeder(pipe_name, device_index)
+            self.made.append(made)
+            return made
+
+        self._real = rec.audio_mod.LoopbackFeeder
+        rec.audio_mod.LoopbackFeeder = feeder
+        self._real_popen = rec.subprocess.Popen
+
+        class _Process:
+            def __init__(self, *a, **k) -> None:
+                self.stdin = io.BytesIO()
+                self.stdout = io.BytesIO()
+                self.stderr = io.BytesIO()
+
+            def poll(self):
+                return None
+
+        rec.subprocess.Popen = _Process
+
+    def tearDown(self) -> None:
+        rec.audio_mod.LoopbackFeeder = self._real
+        rec.subprocess.Popen = self._real_popen
+
+    def _plan(self, tmp) -> rec.RecordingPlan:
+        return rec.RecordingPlan(
+            sources=[rec.VideoSource(monitor=LANDSCAPE)],
+            outputs=[Path(tmp) / "take.mkv"],
+            loopback_pipe=r"\.\pipe\screenrec_test",
+        )
+
+    def test_the_recording_still_happens(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            recorder = rec.Recorder("ffmpeg.exe")
+            problem = recorder.start(self._plan(tmp), wait=False)
+        self.assertEqual(problem, "", "a dead sound device must not refuse the take")
+
+    def test_the_track_is_dropped_from_the_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            recorder = rec.Recorder("ffmpeg.exe")
+            recorder.start(self._plan(tmp), wait=False)
+            self.assertFalse(
+                recorder.plan.has_system_audio,
+                "ffmpeg must not be told to read a pipe nobody is feeding",
+            )
+
+    def test_the_reason_is_kept_in_words_and_as_a_code(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            recorder = rec.Recorder("ffmpeg.exe")
+            recorder.start(self._plan(tmp), wait=False)
+        self.assertEqual(recorder.dropped_audio, "the endpoint is gone")
+        self.assertEqual(recorder.dropped_reason, rec.audio_mod.REASON_NO_DEVICE)
+
+    def test_the_feeder_is_let_go(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            recorder = rec.Recorder("ffmpeg.exe")
+            recorder.start(self._plan(tmp), wait=False)
+        self.assertTrue(self.made[0].stopped, "the pipe has to be given back")
+        self.assertIsNone(recorder.feeder)
+
+    def test_the_note_says_it_again_when_the_file_is_saved(self) -> None:
+        """Said twice on purpose: once while the take can still be restarted, and
+        once with the file, so a missing track is never a surprise on playback."""
+        recorder = rec.Recorder("ffmpeg.exe")
+        recorder.dropped_audio = "the endpoint is gone"
+        recorder.dropped_reason = rec.audio_mod.REASON_NO_DEVICE
+        self.assertEqual(
+            rec.RecordingSession._feeder_note(recorder), "the endpoint is gone"
+        )
+        self.assertEqual(
+            rec.RecordingSession._feeder_reason(recorder),
+            rec.audio_mod.REASON_NO_DEVICE,
+        )
+
+    def test_a_second_take_starts_clean(self) -> None:
+        """`dropped_audio` is per recording. A take that lost its sound must not make
+        the next one say so too - the same bug `_frame_note` had."""
+        recorder = rec.Recorder("ffmpeg.exe")
+        recorder.dropped_audio = "the endpoint is gone"
+        with tempfile.TemporaryDirectory() as tmp:
+            plan = rec.RecordingPlan(
+                sources=[rec.VideoSource(monitor=LANDSCAPE)],
+                outputs=[Path(tmp) / "take.mkv"],
+            )
+            recorder.start(plan, wait=False)
+        self.assertEqual(recorder.dropped_audio, "")
+        self.assertEqual(recorder.dropped_reason, "")

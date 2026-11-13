@@ -222,7 +222,13 @@ class TestBuildsAndShowsTheSettings(PanelTestCase):
                                        mic_device="@device_cm_{realtek}",
                                        mic_label="Line In (Realtek)",
                                        system_audio_enabled=True,
-                                       system_audio_device=9, countdown=3,
+                                       system_audio_device=9,
+                                       # With its name, as a settings file written by
+                                       # this build has it. Without one the panel
+                                       # learns the name and writes it, which is a
+                                       # change and fires - see the test below.
+                                       system_audio_label="DELL U2718Q",
+                                       countdown=3,
                                        draw_mouse=False, show_island=False)
         panel = settings_panel.SettingsPanel(settings)
         fired: list[int] = []
@@ -296,16 +302,45 @@ class TestDevicesAgreeWithTheSettings(PanelTestCase):
         self.assertEqual(fired, [1])
         panel.deleteLater()
 
-    def test_an_unplugged_loopback_is_named_not_substituted(self) -> None:
+    def test_an_unplugged_loopback_is_replaced_by_the_default(self) -> None:
+        """This used to assert the opposite, and the opposite was wrong.
+
+        A remembered endpoint that was not there got a line of its own,
+        `Device 42 (not found)`, and the list opened on it - on the reasoning that
+        `audio.LoopbackFeeder` would fail on that index anyway, so a dead entry beat
+        quietly pretending. Both halves of that have gone: the feeder falls back to
+        the default itself and reports it, and the device is remembered by name, so
+        an index alone is only a hint. What was left was a window opening on a dead
+        choice, which is how a user found it - nothing recorded until they picked a
+        device by hand.
+
+        A bare index with no name behind it is an old settings file, so there is no
+        device to name and nothing to say; it is simply mended.
+        """
         settings = config_mod.Settings(system_audio_enabled=True,
                                        system_audio_device=42)
         panel, fired = self._panel_for(settings)
         panel.refresh_devices(MICS, LOOPBACKS)
-        self.assertEqual(panel.system_combo.currentData(), 42)
-        self.assertIn("not found", panel.system_combo.currentText())
-        # The remembered endpoint survives: it comes back when it is plugged in.
-        self.assertEqual(settings.system_audio_device, 42)
-        self.assertEqual(fired, [])
+        self.assertEqual(panel.system_combo.currentData(), -1)
+        self.assertNotIn("not found", panel.system_combo.currentText())
+        self.assertEqual(panel.system_lost_note.text(), "")
+        self.assertEqual(settings.system_audio_device, -1)
+        self.assertEqual(fired, [1], "the correction is written once")
+        panel.deleteLater()
+
+    def test_an_old_file_learns_the_device_name_once(self) -> None:
+        """A settings file written before the name existed has only a number, and a
+        number stops naming the right device as soon as one is plugged in. The panel
+        fills the name in the first time it sees the device list - that is a change
+        and is written, and it does not happen again."""
+        settings = config_mod.Settings(system_audio_enabled=True,
+                                       system_audio_device=9)
+        panel, fired = self._panel_for(settings)
+        panel.refresh_devices(MICS, LOOPBACKS)
+        self.assertEqual(settings.system_audio_label, "DELL U2718Q")
+        self.assertEqual(fired, [1])
+        panel.refresh_devices(MICS, LOOPBACKS)
+        self.assertEqual(fired, [1], "nothing left to learn")
         panel.deleteLater()
 
     def test_nothing_is_corrected_before_the_devices_are_known(self) -> None:
@@ -1637,3 +1672,116 @@ class TheDefaultPlaybackDeviceIsNamed(PanelTestCase):
             self.panel.refresh_devices([], self.DEVICES)
         self.assertTrue(self.panel.system_combo.itemText(1).strip())
 
+
+
+class TheChosenPlaybackDeviceIsRememberedByNameTest(PanelTestCase):
+    """A PortAudio index is not an identity, and remembering one cost a recording.
+
+    PortAudio numbers devices in the order it finds them when it starts, so plugging
+    a speaker in renumbers everything after it. The Source list therefore opened on
+    `Device 21 (not found)` on a machine where the devices had changed, and nothing
+    was recorded until the user noticed and picked a device by hand. The microphone
+    had always been remembered by name; this is the same for the playback side.
+    """
+
+    DEVICES = [
+        audio_mod.LoopbackDevice(index=25, name="CABLE Input [Loopback]",
+                                 channels=2, rate=48000),
+        audio_mod.LoopbackDevice(index=27, name="Speakers (Desk) [Loopback]",
+                                 channels=2, rate=48000),
+        audio_mod.LoopbackDevice(index=29, name="Headset (Bluetooth) [Loopback]",
+                                 channels=2, rate=48000),
+    ]
+
+    @staticmethod
+    def _device(index: int, label: str):
+        return audio_mod.LoopbackDevice(
+            index=index, name=f"{label} [Loopback]", channels=2, rate=48000
+        )
+
+    def _panel(self, **fields):
+        settings = config_mod.Settings()
+        settings.system_audio_enabled = True
+        for key, value in fields.items():
+            setattr(settings, key, value)
+        panel = settings_panel.SettingsPanel(settings)
+        panel.refresh_devices([], self.DEVICES)
+        self.addCleanup(panel.deleteLater)
+        return panel, settings
+
+    def test_a_name_that_is_here_is_chosen_whatever_its_number_now_is(self) -> None:
+        """The number in the settings file is stale; the name still finds it."""
+        panel, settings = self._panel(
+            system_audio_device=999, system_audio_label="Headset (Bluetooth)"
+        )
+        self.assertEqual(panel.system_combo.currentData(), 29)
+        self.assertEqual(settings.system_audio_device, 29, "and the number is mended")
+
+    def test_a_name_that_is_gone_falls_back_to_the_default(self) -> None:
+        panel, _settings = self._panel(
+            system_audio_device=21, system_audio_label="A headset that is switched off"
+        )
+        self.assertEqual(
+            panel.system_combo.currentData(), -1,
+            "the default playback device, not a dead entry nothing can record",
+        )
+
+    def test_and_says_which_device_is_missing(self) -> None:
+        panel, _settings = self._panel(
+            system_audio_device=21, system_audio_label="A headset that is switched off"
+        )
+        said = panel.system_lost_note.text()
+        self.assertIn("A headset that is switched off", said)
+        self.assertTrue(
+            panel.system_lost_note.isVisibleTo(panel.system_lost_note.parentWidget())
+        )
+
+    def test_the_choice_is_kept_while_the_device_is_away(self) -> None:
+        """A headset that is off for an hour is still the one they picked. Throwing
+        the name away here would mean choosing it again every time it comes back."""
+        _panel, settings = self._panel(
+            system_audio_device=21, system_audio_label="A headset that is switched off"
+        )
+        self.assertEqual(settings.system_audio_label, "A headset that is switched off")
+
+    def test_it_comes_back_on_its_own_when_the_device_does(self) -> None:
+        panel, _settings = self._panel(
+            system_audio_device=21, system_audio_label="A headset that is switched off"
+        )
+        returned = list(self.DEVICES) + [
+            self._device(31, "A headset that is switched off")
+        ]
+        panel.refresh_devices([], returned)
+        self.assertEqual(panel.system_combo.currentData(), 31)
+        self.assertFalse(
+            panel.system_lost_note.isVisibleTo(panel.system_lost_note.parentWidget())
+        )
+
+    def test_an_old_settings_file_with_a_dead_number_is_simply_mended(self) -> None:
+        """No name to report, so nothing is said - the number was never a promise."""
+        panel, settings = self._panel(system_audio_device=21, system_audio_label="")
+        self.assertEqual(panel.system_combo.currentData(), -1)
+        self.assertEqual(panel.system_lost_note.text(), "")
+        self.assertEqual(settings.system_audio_device, -1)
+
+    def test_a_fresh_install_follows_windows(self) -> None:
+        panel, _settings = self._panel(system_audio_device=-1, system_audio_label="")
+        self.assertEqual(panel.system_combo.currentData(), -1)
+        self.assertEqual(panel.system_lost_note.text(), "")
+
+    def test_picking_a_device_writes_its_name_too(self) -> None:
+        panel, settings = self._panel(system_audio_device=-1, system_audio_label="")
+        index = panel.system_combo.findData(29)
+        panel.system_combo.setCurrentIndex(index)
+        self.assertEqual(settings.system_audio_device, 29)
+        self.assertEqual(settings.system_audio_label, "Headset (Bluetooth)")
+
+    def test_the_default_is_not_a_device_and_gets_no_name(self) -> None:
+        """"Follow Windows" must not be frozen into the name of whatever it resolved
+        to today, or it would stop following."""
+        panel, settings = self._panel(
+            system_audio_device=29, system_audio_label="Headset (Bluetooth)"
+        )
+        panel.system_combo.setCurrentIndex(panel.system_combo.findData(-1))
+        self.assertEqual(settings.system_audio_device, -1)
+        self.assertEqual(settings.system_audio_label, "")

@@ -315,6 +315,15 @@ class Settings:
     mic_label: str = ""
     system_audio_enabled: bool = False
     system_audio_device: int = -1  # pyaudiowpatch device index, -1 = default loopback
+    #: The Windows name of that endpoint, and the thing that actually identifies it.
+    #: `system_audio_device` is a PortAudio index, and PortAudio numbers devices in
+    #: the order it finds them when it starts - so plugging in a speaker renumbers
+    #: every device after it, and an index saved yesterday names something else today
+    #: or nothing at all. The microphone has always been remembered by name for this
+    #: reason (`mic_device` is a dshow identifier, not a number); this is the same
+    #: thing for the playback side, added after a user found the Source list sitting
+    #: on "Device 21 (not found)" on a machine where the devices had changed.
+    system_audio_label: str = ""
     audio_mode: str = AUDIO_MIX
     #: Shifts the recorded sound against the picture, in milliseconds; positive delays it.
     #: Left at 0 because it was measured not to be needed - see docs/HANDOVER.md. It is a

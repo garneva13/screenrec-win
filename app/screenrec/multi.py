@@ -123,6 +123,35 @@ class MultiSession:
         return self._paused
 
     @property
+    def dropped_audio(self) -> str:
+        """Why system sound is missing, said once however many screens lost it.
+
+        Only one screen carries the sound in a multi-screen take, so in practice there
+        is at most one sentence here; `next` rather than a join keeps that true even if
+        that ever changes.
+        """
+        return next(
+            (
+                take.session.dropped_audio
+                for take in self.takes
+                if take.session is not None and take.session.dropped_audio
+            ),
+            "",
+        )
+
+    @property
+    def dropped_reason(self) -> str:
+        """The `audio.REASON_*` code behind `dropped_audio`, for translation."""
+        return next(
+            (
+                take.session.dropped_reason
+                for take in self.takes
+                if take.session is not None and take.session.dropped_audio
+            ),
+            "",
+        )
+
+    @property
     def progress(self) -> MultiProgress:
         total = MultiProgress()
         rates: list[float] = []

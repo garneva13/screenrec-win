@@ -217,6 +217,53 @@ RUSSIAN: dict[str, str] = {
         "Звук идёт в «{where}», а записывается «{here}».",
     "System sound was on but no audio arrived.":
         "Звук системы был включён, но звука не пришло.",
+
+    # -- system sound that could not be had at all ------------------------------
+    # The take goes ahead without it rather than not happening; these sentences say
+    # so at the start and again when the file is saved. They come from `audio.py`,
+    # which is Qt-free and cannot translate itself, so `ui/app.py` matches them by
+    # an `audio.REASON_*` code - see `Application._audio_reason`.
+    "Windows is not offering a playback device that can be recorded, so this "
+    "recording has no system sound - the picture and the microphone are not "
+    "affected. A playback device has usually just gone away, a headset switching "
+    "off for instance. Choose one in Settings, Sound.":
+        "Windows не предлагает ни одного устройства воспроизведения, с которого "
+        "можно записывать, поэтому в этой записи нет звука системы — картинка и "
+        "микрофон не затронуты. Обычно это значит, что устройство только что "
+        "пропало: например, выключилась гарнитура. Выберите устройство в "
+        "настройках, в разделе «Звук».",
+    "System sound cannot be captured: the sound library is missing from this copy "
+    "of ScreenRec. The picture and the microphone are not affected.":
+        "Звук системы записать нечем: в этой копии ScreenRec нет звуковой "
+        "библиотеки. Картинка и микрофон не затронуты.",
+    "System sound did not start in time, so this recording has no system sound - "
+    "the picture and the microphone are not affected. Start the recording again, "
+    "or switch system sound off.":
+        "Звук системы не успел запуститься, поэтому в этой записи его нет — "
+        "картинка и микрофон не затронуты. Запустите запись заново или выключите "
+        "звук системы.",
+    "The channel ScreenRec uses for system sound is held by something else, so "
+    "this recording has no system sound. Close any other copy of ScreenRec; if "
+    "there is none, restart ScreenRec.":
+        "Канал, через который ScreenRec берёт звук системы, занят чем-то другим, "
+        "поэтому в этой записи звука системы нет. Закройте другую копию "
+        "ScreenRec; если её нет — перезапустите ScreenRec.",
+    "The channel for system sound could not be opened, so this recording has no "
+    "system sound. Restart ScreenRec, or record with system sound switched off.":
+        "Канал для звука системы не открылся, поэтому в этой записи его нет. "
+        "Перезапустите ScreenRec или пишите с выключенным звуком системы.",
+    "Capturing system sound failed, so this recording has no system sound - the "
+    "picture and the microphone are not affected.":
+        "Захват звука системы не удался, поэтому в этой записи его нет — картинка "
+        "и микрофон не затронуты.",
+    "The playback device chosen for system sound was not available, so the "
+    "current default one was recorded instead.":
+        "Выбранное для звука системы устройство воспроизведения оказалось "
+        "недоступно, поэтому записано текущее устройство по умолчанию.",
+    # A session that claimed to be recording with nothing behind it. It used to
+    # swallow every press of the record button in silence - see `_clear_the_way`.
+    "The last recording did not end cleanly. Starting a new one.":
+        "Прошлая запись завершилась некорректно. Начинаю новую.",
     # The settings changed while the recording was paused, so the segments cannot be
     # joined. The whole sentence is the key: it used to be written in English into
     # "The recording could not be set up: {reason}" above, which left a Russian

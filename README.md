@@ -45,7 +45,8 @@ is bundled under `tools\ffmpeg`.
 |---|---|
 | Source | whole monitor, a region you drag out, or one window |
 | Audio | microphone (DirectShow) and/or system sound (WASAPI loopback), mixed or as two tracks, each with its own level meter on the bar |
-| Playback device | "Default" follows Windows **while recording**: a headset that runs out of battery moves the sound to the speakers, and the recording moves with it. A named device is never moved - the bar says where the sound went instead |
+| Playback device | "Default" follows Windows **while recording**: a headset that runs out of battery moves the sound to the speakers, and the recording moves with it. A named device is never moved - the bar says where the sound went instead. A named device is remembered **by name**, so it survives the renumbering that plugging in a speaker causes; while it is away the default is recorded and the settings window says so, and it is chosen again on its own when it comes back |
+| Sound that will not record | **the take still happens.** A playback device that will not open costs the system-sound track, not the recording: the bar says which track is missing and why, the moment it starts and again when the file is saved. A chosen device that has gone is replaced by the current default, and that too is said |
 | Cursor | drawn or not; clicks optionally get a fading ring |
 | Camera | optional, in a corner of the recording: four corners, four sizes, rounded rectangle / circle / rectangle, and the camera's own capture resolution chosen for the window or picked by hand - drawn on the desktop, so it costs the capture pipeline nothing, and it can be switched off **in the middle of a take** when it covers something |
 | Settings | behind the gear: five pages, a diagram of where the camera sits, and shortcut boxes that read the keys you press |
@@ -170,6 +171,20 @@ silent.
 ```
 
 No GPU, no recording and no visible window is needed for any of them.
+
+## When something goes wrong quietly
+
+ScreenRec is a windowed program: it has no console, and Qt catches an exception raised
+inside a slot and carries on with the event loop. Nothing is printed, because there is
+nowhere to print it. Every unhandled exception, on the main thread and on the capture
+and hotkey threads, is therefore appended to
+
+```
+%APPDATA%\ScreenRec\errors.log
+```
+
+with the time it happened. It is rotated at 512 KB. If the program is running and not
+doing what it should, that file is the first place to look.
 
 ## Layout
 

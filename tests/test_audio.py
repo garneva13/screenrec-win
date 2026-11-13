@@ -513,3 +513,59 @@ class TheLoopbackDeviceLabelTest(unittest.TestCase):
         )
         self.assertTrue(device.label.strip())
 
+
+
+class ResolvingAnEndpointByNameTest(unittest.TestCase):
+    """A PortAudio index is a position in a list, not an identity.
+
+    PortAudio enumerates its devices once, when it starts, in the order it finds
+    them - so plugging a speaker in renumbers everything after it. A user's settings
+    pointed at index 21, a speaker had been added since, and the Source list showed
+    `Device 21 (not found)` with nothing recorded until they picked a device by hand.
+    """
+
+    class _Device:
+        def __init__(self, index, label) -> None:
+            self.index = index
+            self.label = label
+
+    def setUp(self) -> None:
+        self.devices = [
+            self._Device(25, "CABLE Input (VB-Audio Virtual Cable)"),
+            self._Device(27, "Speakers (Desk)"),
+            self._Device(29, "Headset (Bluetooth)"),
+        ]
+
+    def test_a_name_finds_its_device(self) -> None:
+        self.assertEqual(
+            audio.index_for_label("Headset (Bluetooth)", self.devices), 29
+        )
+
+    def test_a_name_that_is_not_there_is_minus_one(self) -> None:
+        self.assertEqual(audio.index_for_label("Headset (gone)", self.devices), -1)
+
+    def test_no_name_is_minus_one(self) -> None:
+        self.assertEqual(audio.index_for_label("", self.devices), -1)
+
+    def test_a_near_match_is_not_a_match(self) -> None:
+        """Recording the wrong endpoint is silent, and is exactly the failure that
+        cost a recorded call. Never guess."""
+        self.assertEqual(audio.index_for_label("Headset", self.devices), -1)
+        self.assertEqual(audio.index_for_label("headset (bluetooth)", self.devices), -1)
+
+    def test_the_reverse_names_a_device(self) -> None:
+        self.assertEqual(audio.label_for_index(27, self.devices), "Speakers (Desk)")
+
+    def test_the_default_is_not_a_device_and_has_no_name(self) -> None:
+        self.assertEqual(audio.label_for_index(-1, self.devices), "")
+
+    def test_an_index_nothing_sits_at_has_no_name(self) -> None:
+        self.assertEqual(audio.label_for_index(21, self.devices), "")
+
+    def test_a_sound_stack_that_raises_is_not_an_error_of_its_own(self) -> None:
+        class _Explodes(list):
+            def __iter__(self):
+                raise OSError("the audio stack is unhappy")
+
+        self.assertEqual(audio.index_for_label("anything", _Explodes()), -1)
+        self.assertEqual(audio.label_for_index(1, _Explodes()), "")

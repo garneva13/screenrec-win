@@ -143,6 +143,17 @@ class _Controller:
     _capture_size = app_module.Application._capture_size
     start_recording = app_module.Application.start_recording
     _really_start = app_module.Application._really_start
+    # A take may only begin when nothing else is running, and a session that only
+    # claims to be running is cleared rather than swallowing the press in silence.
+    _clear_the_way = app_module.Application._clear_the_way
+    # The program's own windows leave the capture once a take has really started.
+    _hide_from_capture = app_module.Application._hide_from_capture
+    # System sound that could not be had: said at the start, in the user's language.
+    _say_dropped_audio = app_module.Application._say_dropped_audio
+    # Wrapped again: reading a `staticmethod` off a class hands back the plain
+    # function, and a plain function in a class body is an instance method - so
+    # without this the borrowed copy would be passed a `self` the real one has not got.
+    _audio_reason = staticmethod(app_module.Application._audio_reason)
     _start_all_screens = app_module.Application._start_all_screens
     open_settings = app_module.Application.open_settings
     # The settings window asks for the global hotkeys to be stood down while a
@@ -154,6 +165,10 @@ class _Controller:
     _tick_endpoints = app_module.Application._tick_endpoints
     _follow_default = app_module.Application._follow_default
     _advise_on_silence = app_module.Application._advise_on_silence
+    # Which endpoint the user picked, resolved by name rather than by a saved
+    # index - PortAudio renumbers its devices whenever the set of them changes.
+    _chosen_loopback_index = app_module.Application._chosen_loopback_index
+    _choose_loopback = app_module.Application._choose_loopback
     _loopback_index_named = app_module.Application._loopback_index_named
     _loopback_name = app_module.Application._loopback_name
     _on_camera_toggled = app_module.Application._on_camera_toggled
@@ -2177,6 +2192,11 @@ class _NoSession:
     def __init__(self, *args, **kwargs) -> None:
         pass
 
+    recording = True
+    paused = False
+    dropped_audio = ""
+    dropped_reason = ""
+
     def start(self, on_progress=None, loopback_device=-1) -> str:
         return ""
 
@@ -2477,3 +2497,205 @@ class SayingWhereTheSoundWentTest(ControllerTestCase):
         controller._tick_endpoints()
         self.assertEqual(self.bar.status_label.text(), "")
 
+
+
+class AFailedStartLeavesNothingBehindTest(ControllerTestCase):
+    """What a start that fails must not leave lying about.
+
+    The capture flag went on at the top of `_really_start`, before the session was
+    made, and nothing put it back when the start failed. On 2026-11-13 a start refused
+    by a dead sound device therefore hid the program from every screen capture on the
+    machine - the user could read the error on the bar but could not photograph it,
+    and sent a picture of the screen taken with a phone.
+
+    The `_clear_the_way` tests below cover a guard rather than a defect: `active` is
+    `recording or paused` in both session classes, so its last branch is unreachable
+    in this build. It is tested because a silent guard in front of the record button
+    is the thing that would hide the next mistake about what `active` means.
+    """
+
+    class _Refuses:
+        """A session that will not start, as a full disk or a dead encoder makes one."""
+
+        active = False
+        recording = False
+        paused = False
+        dropped_audio = ""
+        dropped_reason = ""
+
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def start(self, on_progress=None, loopback_device=-1) -> str:
+            return "no"
+
+    def tearDown(self) -> None:
+        surfaces.set_recording(False)
+        super().tearDown()
+
+    def test_a_start_that_fails_does_not_hide_the_program(self) -> None:
+        controller = self.controller()
+        surfaces.set_recording(False)
+        controller.session = None
+        with mock.patch.object(recorder, "RecordingSession", self._Refuses):
+            controller._really_start()
+        self.assertFalse(
+            surfaces.recording(),
+            "a take that never happened must not take the program out of capture",
+        )
+
+    def test_a_running_take_still_swallows_a_second_press(self) -> None:
+        """The ring and its tick can both land; that is normal and says nothing."""
+        controller = self.controller()
+        controller.session = types.SimpleNamespace(
+            active=True, recording=True, paused=False
+        )
+        self.assertFalse(controller._clear_the_way())
+        self.assertIs(controller.session.recording, True, "it is left alone")
+
+    def test_a_paused_take_is_left_alone_too(self) -> None:
+        controller = self.controller()
+        controller.session = types.SimpleNamespace(
+            active=True, recording=False, paused=True
+        )
+        self.assertFalse(controller._clear_the_way())
+
+    def test_wreckage_is_cleared_and_said(self) -> None:
+        """`active` with nothing recording and nothing paused cannot happen today.
+        If it ever can, the record button must say so rather than go quiet."""
+        controller = self.controller()
+        controller.session = types.SimpleNamespace(
+            active=True, recording=False, paused=False
+        )
+        surfaces.set_recording(True)
+        self.assertTrue(controller._clear_the_way())
+        self.assertIsNone(controller.session)
+        self.assertFalse(surfaces.recording(), "and the chrome comes back")
+        self.assertIn("did not end cleanly", controller.bar.status_label.text())
+
+    def test_a_finished_session_is_simply_replaced(self) -> None:
+        controller = self.controller()
+        controller.session = types.SimpleNamespace(
+            active=False, recording=False, paused=False
+        )
+        was = controller.bar.status_label.text()
+        self.assertTrue(controller._clear_the_way())
+        self.assertEqual(controller.bar.status_label.text(), was, "nothing to say")
+
+
+class SystemSoundThatCouldNotBeHadIsSaidAtOnceTest(ControllerTestCase):
+    """A take missing a track has to say so while it can still be restarted."""
+
+    def test_the_reason_lands_on_the_bar_when_the_take_begins(self) -> None:
+        controller = self.controller()
+        controller._say_dropped_audio(
+            types.SimpleNamespace(
+                dropped_audio="the endpoint is gone",
+                dropped_reason=audio_module.REASON_NO_DEVICE,
+            )
+        )
+        said = controller.bar.status_label.text()
+        self.assertIn("playback device", said.lower() + said)
+
+    def test_a_take_with_its_sound_says_nothing(self) -> None:
+        controller = self.controller()
+        was = controller.bar.status_label.text()
+        controller._say_dropped_audio(
+            types.SimpleNamespace(dropped_audio="", dropped_reason="")
+        )
+        self.assertEqual(controller.bar.status_label.text(), was)
+
+    def test_every_reason_has_a_sentence_of_its_own(self) -> None:
+        """`audio.py` cannot translate itself, so each `REASON_*` is matched here.
+        A reason with no sentence shows the user an English errno - which is exactly
+        what the bar did on 2026-11-13."""
+        codes = [
+            value for name, value in vars(audio_module).items()
+            if name.startswith("REASON_")
+        ]
+        self.assertTrue(codes)
+        for code in codes:
+            with self.subTest(code=code):
+                said = app_module.Application._audio_reason(code, "ENGLISH FALLBACK")
+                self.assertNotEqual(
+                    said, "ENGLISH FALLBACK", f"{code} has no sentence of its own"
+                )
+
+    def test_an_unknown_reason_still_says_something(self) -> None:
+        self.assertEqual(
+            app_module.Application._audio_reason("", "something went wrong"),
+            "something went wrong",
+        )
+
+
+class TheChosenEndpointSurvivesRenumberingTest(ControllerTestCase):
+    """The bar and the recorder must find the chosen device by name too.
+
+    `Application._loopback_index` used to return `settings.system_audio_device`
+    outright. PortAudio numbers its devices in the order it finds them when it
+    starts, so that index names a different endpoint - or none - as soon as a
+    speaker is plugged in. On a user's machine it named none, and the settings
+    window sat on `Device 21 (not found)` with nothing recorded.
+    """
+
+    class _Device:
+        def __init__(self, index, label) -> None:
+            self.index = index
+            self.label = label
+
+    def _controller(self, **fields):
+        controller = self.controller()
+        controller.loopbacks = [
+            self._Device(25, "CABLE Input"),
+            self._Device(27, "Speakers (Desk)"),
+            self._Device(29, "Headset (Bluetooth)"),
+        ]
+        for key, value in fields.items():
+            setattr(controller.settings, key, value)
+        return controller
+
+    def test_the_name_wins_over_a_stale_number(self) -> None:
+        controller = self._controller(
+            system_audio_device=21, system_audio_label="Headset (Bluetooth)"
+        )
+        self.assertEqual(controller._chosen_loopback_index(), 29)
+
+    def test_a_device_that_has_gone_means_follow_windows(self) -> None:
+        """There is nothing left to be loyal to, and a recording with no sound in it
+        is the worse answer. The choice itself is kept by the settings window."""
+        controller = self._controller(
+            system_audio_device=21, system_audio_label="A headset that is off"
+        )
+        self.assertEqual(controller._chosen_loopback_index(), -1)
+
+    def test_an_old_settings_file_is_honoured_and_given_a_name(self) -> None:
+        controller = self._controller(
+            system_audio_device=29, system_audio_label=""
+        )
+        self.assertEqual(controller._chosen_loopback_index(), 29)
+        self.assertEqual(
+            controller.settings.system_audio_label, "Headset (Bluetooth)",
+            "so the next renumbering cannot take it away again",
+        )
+
+    def test_follow_windows_stays_follow_windows(self) -> None:
+        controller = self._controller(
+            system_audio_device=-1, system_audio_label=""
+        )
+        self.assertEqual(controller._chosen_loopback_index(), -1)
+
+    def test_choosing_from_the_bar_writes_the_name(self) -> None:
+        controller = self._controller()
+        controller._choose_loopback(27)
+        self.assertEqual(controller.settings.system_audio_device, 27)
+        self.assertEqual(controller.settings.system_audio_label, "Speakers (Desk)")
+
+    def test_choosing_the_default_from_the_bar_clears_the_name(self) -> None:
+        """"Follow Windows" is not a device. Freezing today's name into it would
+        stop it following, which is the whole feature."""
+        controller = self._controller(
+            system_audio_device=27, system_audio_label="Speakers (Desk)"
+        )
+        controller._choose_loopback(-1)
+        self.assertEqual(controller.settings.system_audio_device, -1)
+        self.assertEqual(controller.settings.system_audio_label, "")

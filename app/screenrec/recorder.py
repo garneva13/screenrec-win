@@ -895,6 +895,17 @@ class RecordingSession:
         self.error: str = ""
         self._banked_seconds = 0.0
         self._banked_bytes = 0
+        #: Frames ffmpeg could not take, over the whole take. Banked like the seconds
+        #: and the bytes, and for the same reason: a take that was paused and resumed
+        #: used to report only the last segment's losses, so pausing hid them.
+        self._banked_dropped = 0
+        #: Frames actually written, over the whole take. Banked for the same reason,
+        #: and needed for a second question the counters could not answer: how many
+        #: frames a second really reached the file. A capture starved of frames drops
+        #: nothing - there is nothing to drop - so `dropped` stays at zero while three
+        #: frames in four never happen. Measured on a user's own recording on
+        #: 2026-11-16: 808 frames where 3224 were asked for, and every counter clean.
+        self._banked_frames = 0
         self._on_progress = None
         self._loopback_device = -1
         self._paused = False
@@ -954,13 +965,15 @@ class RecordingSession:
         total = Progress()
         total.seconds = self._banked_seconds
         total.size_bytes = self._banked_bytes
+        total.dropped = self._banked_dropped
+        total.frames = self._banked_frames
         if self.recorder is not None:
             current = self.recorder.progress
             total.seconds += current.seconds
             total.size_bytes += current.size_bytes
-            total.frames = current.frames
+            total.frames += current.frames
             total.fps = current.fps
-            total.dropped = current.dropped
+            total.dropped += current.dropped
         return total
 
     def log_text(self) -> str:
@@ -1197,6 +1210,8 @@ class RecordingSession:
         problem = recorder.stop()
         banked = recorder.progress
         self._banked_seconds += banked.seconds
+        self._banked_dropped += banked.dropped
+        self._banked_frames += banked.frames
         segment = self.take.segments[-1] if self.take.segments else None
         if segment is not None and segment.is_file():
             self._banked_bytes += segment.stat().st_size

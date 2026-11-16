@@ -1944,3 +1944,58 @@ class SystemSoundIsNotWorthARecordingTest(unittest.TestCase):
             recorder.start(plan, wait=False)
         self.assertEqual(recorder.dropped_audio, "")
         self.assertEqual(recorder.dropped_reason, "")
+
+
+class LostFramesAreCountedOverTheWholeTakeTest(unittest.TestCase):
+    """Dropped frames are banked like the seconds and the bytes, or pausing hides them.
+
+    `progress` reported `current.dropped` - the running segment's count - while the
+    seconds and the bytes beside it were sums over the take. So a recording that was
+    paused and resumed reported the losses of whatever segment happened to be last,
+    and a pause reset the figure the user was shown to zero.
+    """
+
+    class _Recorder:
+        def __init__(self, dropped=0, seconds=0.0, size=0) -> None:
+            self.progress = rec.Progress(
+                dropped=dropped, seconds=seconds, size_bytes=size
+            )
+
+        running = True
+
+    def _session(self) -> rec.RecordingSession:
+        session = rec.RecordingSession.__new__(rec.RecordingSession)
+        session.recorder = None
+        session._banked_seconds = 0.0
+        session._banked_bytes = 0
+        session._banked_dropped = 0
+        session._banked_frames = 0
+        return session
+
+    def test_a_take_that_lost_nothing_says_nothing(self) -> None:
+        session = self._session()
+        self.assertEqual(session.progress.dropped, 0)
+
+    def test_the_running_segment_counts(self) -> None:
+        session = self._session()
+        session.recorder = self._Recorder(dropped=7, seconds=3.0)
+        self.assertEqual(session.progress.dropped, 7)
+
+    def test_banked_and_running_are_added(self) -> None:
+        session = self._session()
+        session._banked_dropped = 12
+        session.recorder = self._Recorder(dropped=7, seconds=3.0)
+        self.assertEqual(
+            session.progress.dropped, 19,
+            "the segment before the pause counts as much as the one after it",
+        )
+
+    def test_a_finished_take_still_knows_what_it_lost(self) -> None:
+        """`stop` clears the recorder, and the count has to outlive it - the sentence
+        the user reads is written after the file is saved."""
+        session = self._session()
+        session._banked_dropped = 12
+        session.recorder = None
+        self.assertEqual(session.progress.dropped, 12)
+
+

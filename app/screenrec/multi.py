@@ -140,6 +140,19 @@ class MultiSession:
         )
 
     @property
+    def framerate(self) -> int:
+        """The rate the screens were recorded at - they all share one. 0 if unknown.
+
+        Read from the take rather than from the settings: the settings can be changed
+        while a recording runs, and the files were written at whatever it started with.
+        """
+        for take in self.takes:
+            rate = getattr(getattr(take.session, "take", None), "framerate", 0)
+            if rate:
+                return int(rate)
+        return 0
+
+    @property
     def dropped_reason(self) -> str:
         """The `audio.REASON_*` code behind `dropped_audio`, for translation."""
         return next(

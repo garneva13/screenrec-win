@@ -114,6 +114,24 @@ RUSSIAN: dict[str, str] = {
     "Stopped automatically after {count} {word}.":
         "Остановлено автоматически через {count} {word}.",
     "Saved {name} — {size} MB": "Сохранено: {name} — {size} МБ",
+    # Said with the saved file, because the live count on the bar is in a corner the
+    # user is not looking at while they work and is wiped by the "Saved" line.
+    "{clause} — {share}% of it. The machine could not keep up with the screen.":
+        "{clause} — это {share} % от неё. Машина не успевала за экраном.",
+    # The count takes three forms and the verb moves with it, so the clause is picked
+    # whole rather than having a word dropped into it: "1 кадров не попали" is what a
+    # single string produced. See `_lost_frames_sentence`.
+    # The capture was starved rather than dropping anything, so no counter in the
+    # program saw it. See `_slow_capture_note`.
+    "Recorded at {real} frames a second instead of {asked} — the picture will jump. "
+    "Recording at the screen's own size costs the machine far less than scaling "
+    "it down.":
+        "Записано {real} кадра в секунду вместо {asked} — картинка будет рваной. "
+        "Запись в собственном размере экрана обходится машине гораздо дешевле, чем "
+        "с уменьшением.",
+    "lost.frames.one": "{count} кадр не попал в запись",
+    "lost.frames.few": "{count} кадра не попали в запись",
+    "lost.frames.many": "{count} кадров не попали в запись",
     "Recording discarded.": "Запись удалена.",
     "Recording stopped on its own.": "Запись остановилась сама.",
     # The three lines of ffmpeg's log that follow it, each given its turn on the bar by

@@ -154,6 +154,11 @@ class _Controller:
     # function, and a plain function in a class body is an instance method - so
     # without this the borrowed copy would be passed a `self` the real one has not got.
     _audio_reason = staticmethod(app_module.Application._audio_reason)
+    # How many frames never reached the file, said when it is saved. Wrapped for the
+    # same reason as the line above: a `staticmethod` read off a class is a plain
+    # function, and a plain function in a class body is an instance method.
+    _lost_frames_note = staticmethod(app_module.Application._lost_frames_note)
+    _slow_capture_note = staticmethod(app_module.Application._slow_capture_note)
     _start_all_screens = app_module.Application._start_all_screens
     open_settings = app_module.Application.open_settings
     # The settings window asks for the global hotkeys to be stood down while a
@@ -2699,3 +2704,139 @@ class TheChosenEndpointSurvivesRenumberingTest(ControllerTestCase):
         controller._choose_loopback(-1)
         self.assertEqual(controller.settings.system_audio_device, -1)
         self.assertEqual(controller.settings.system_audio_label, "")
+
+
+class LostFramesAreSaidWithTheFileTest(ControllerTestCase):
+    """The live count is in a corner nobody working full screen ever looks at.
+
+    The bar shows dropped frames while a take runs, in the warning colour, and the
+    "Saved ..." line wipes it the moment the take ends. A user recorded days of work
+    in Maya and Unreal and only found the loss by watching the files back - the one
+    place the program never said anything.
+    """
+
+    @staticmethod
+    def _session(dropped, seconds=60.0, framerate=60):
+        return types.SimpleNamespace(
+            progress=types.SimpleNamespace(dropped=dropped, seconds=seconds),
+            take=types.SimpleNamespace(framerate=framerate),
+        )
+
+    def test_a_clean_take_says_nothing(self) -> None:
+        self.assertIsNone(
+            app_module.Application._lost_frames_note(self._session(0))
+        )
+
+    def test_the_count_and_the_share_are_both_given(self) -> None:
+        note = app_module.Application._lost_frames_note(self._session(36))
+        self.assertIsNotNone(note)
+        said = note()
+        self.assertIn("36", said)
+        self.assertIn("1.0", said, "36 of 3636 offered is 1.0%")
+
+    def test_the_share_uses_the_take_s_own_rate_not_the_settings(self) -> None:
+        """The settings can be changed while a recording runs; the file was written
+        at whatever it started with."""
+        note = app_module.Application._lost_frames_note(
+            self._session(30, seconds=60.0, framerate=30)
+        )
+        self.assertIn("1.6", note(), "30 of 1830 offered is 1.6%")
+
+    def test_a_take_with_no_rate_to_ask_is_still_reported(self) -> None:
+        session = types.SimpleNamespace(
+            progress=types.SimpleNamespace(dropped=5, seconds=10.0)
+        )
+        said = app_module.Application._lost_frames_note(session)()
+        self.assertIn("5", said)
+
+    def test_a_take_of_no_length_does_not_divide_by_zero(self) -> None:
+        note = app_module.Application._lost_frames_note(
+            self._session(3, seconds=0.0)
+        )
+        self.assertIn("3", note())
+
+    def test_it_lands_on_the_bar_when_the_recording_is_saved(self) -> None:
+        controller = self.controller()
+        said: list[str] = []
+        with mock.patch.object(
+            controller, "_say_each", lambda items: said.extend(
+                item[0]() if callable(item[0]) else item[0] for item in items
+            )
+        ):
+            app_module.Application._lost_frames_note(self._session(36))
+            controller._say_each([(app_module.Application._lost_frames_note(
+                self._session(36)), True)])
+        self.assertTrue(any("36" in line for line in said))
+
+
+class AStarvedCaptureIsSaidOutLoudTest(ControllerTestCase):
+    """The failure no counter in the program could see.
+
+    `drop_frames` counts frames ffmpeg was handed and threw away. A capture that is
+    starved is handed nothing, drops nothing, and reports a clean take. Two of the
+    user's own recordings on 2026-11-16 - 1080p scaled down from a 1440p screen -
+    held 7.5 and 8.4 frames a second where 30 and 60 were asked for, with every
+    counter at zero and the program silent.
+    """
+
+    @staticmethod
+    def _session(frames, seconds, framerate):
+        return types.SimpleNamespace(
+            progress=types.SimpleNamespace(
+                frames=frames, seconds=seconds, dropped=0
+            ),
+            take=types.SimpleNamespace(framerate=framerate),
+        )
+
+    def test_a_take_that_kept_up_says_nothing(self) -> None:
+        self.assertIsNone(
+            app_module.Application._slow_capture_note(
+                self._session(1807, 30.1, 60)
+            )
+        )
+
+    def test_the_measured_idle_takes_do_not_cry_wolf(self) -> None:
+        """Measured on this machine with nothing else running: 1807 frames of an
+        expected 1818 scaled, 1812 native. Both must pass in silence."""
+        for frames in (1807, 1812, 1814, 1810):
+            with self.subTest(frames=frames):
+                self.assertIsNone(
+                    app_module.Application._slow_capture_note(
+                        self._session(frames, 30.3, 60)
+                    )
+                )
+
+    def test_the_user_s_own_30_fps_take_is_reported(self) -> None:
+        note = app_module.Application._slow_capture_note(
+            self._session(808, 107.47, 30)
+        )
+        self.assertIsNotNone(note)
+        said = note()
+        self.assertIn("7.5", said.replace(",", "."))
+        self.assertIn("30", said)
+
+    def test_the_user_s_own_60_fps_take_is_reported(self) -> None:
+        said = app_module.Application._slow_capture_note(
+            self._session(80, 9.5, 60)
+        )()
+        self.assertIn("8.4", said.replace(",", "."))
+
+    def test_nine_tenths_is_the_line(self) -> None:
+        self.assertIsNone(
+            app_module.Application._slow_capture_note(self._session(54, 1.0, 60)),
+            "90% of the asked rate is not a complaint",
+        )
+        self.assertIsNotNone(
+            app_module.Application._slow_capture_note(self._session(53, 1.0, 60))
+        )
+
+    def test_a_take_too_short_to_have_a_rate_says_nothing(self) -> None:
+        self.assertIsNone(
+            app_module.Application._slow_capture_note(self._session(3, 0.2, 60))
+        )
+
+    def test_a_take_with_no_frames_is_left_to_the_louder_report(self) -> None:
+        """No frames at all is a recording that failed, and that is said elsewhere."""
+        self.assertIsNone(
+            app_module.Application._slow_capture_note(self._session(0, 12.0, 60))
+        )

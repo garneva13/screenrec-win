@@ -340,3 +340,61 @@ class EngineMessageTest(LanguageTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LostFramesReadAsRussianTest(unittest.TestCase):
+    """The count takes three forms and the verb moves with it.
+
+    A single string with `{count}` in it produced "1 кадров не попали", which is the
+    kind of thing that makes a program look like a translation of itself. The rule
+    that every naive version gets wrong is 11 to 14: they take the *many* form
+    whatever their last digit, so 11 is "кадров" while 21 is "кадр".
+    """
+
+    def setUp(self) -> None:
+        self._was = i18n.language()
+        i18n.set_language(i18n.LANG_RU)
+
+    def tearDown(self) -> None:
+        i18n.set_language(self._was)
+
+    def test_one(self) -> None:
+        said = app_module._lost_frames_sentence(1, 1.0)
+        self.assertIn("1 кадр не попал", said)
+
+    def test_two_to_four(self) -> None:
+        for count in (2, 3, 4, 22, 33):
+            with self.subTest(count=count):
+                self.assertIn(f"{count} кадра не попали",
+                              app_module._lost_frames_sentence(count, 1.0))
+
+    def test_five_and_up(self) -> None:
+        for count in (5, 9, 25, 100):
+            with self.subTest(count=count):
+                self.assertIn(f"{count} кадров не попали",
+                              app_module._lost_frames_sentence(count, 1.0))
+
+    def test_eleven_to_fourteen_take_the_many_form(self) -> None:
+        for count in (11, 12, 13, 14, 111):
+            with self.subTest(count=count):
+                self.assertIn(f"{count} кадров не попали",
+                              app_module._lost_frames_sentence(count, 1.0))
+
+    def test_twenty_one_does_not(self) -> None:
+        self.assertIn("21 кадр не попал", app_module._lost_frames_sentence(21, 1.0))
+
+    def test_the_decimal_mark_is_a_comma(self) -> None:
+        said = app_module._lost_frames_sentence(36, 1.25)
+        self.assertIn("1,2", said)
+        self.assertNotIn("1.2", said)
+
+    def test_a_share_under_a_tenth_keeps_two_places(self) -> None:
+        """"0,0 %" beside a frame that really was lost reads as "none"."""
+        said = app_module._lost_frames_sentence(1, 0.027)
+        self.assertIn("0,03", said)
+
+    def test_english_keeps_the_full_stop(self) -> None:
+        i18n.set_language(i18n.LANG_EN)
+        said = app_module._lost_frames_sentence(36, 1.25)
+        self.assertIn("1.2", said)
+        self.assertIn("36 frames did not reach", said)

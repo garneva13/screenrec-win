@@ -67,6 +67,50 @@ ENDPOINT_MS = 2000
 STATUS_DWELL_MS = 2200
 
 
+def _rate_text(rate: float) -> str:
+    """A frame rate for a sentence: one decimal, and a comma where that is the mark."""
+    figure = f"{rate:.1f}"
+    return figure if i18n.language() == i18n.LANG_EN else figure.replace(".", ",")
+
+
+def _lost_frames_sentence(lost: int, share: float) -> str:
+    """"N frames did not reach the recording - X% of it", in today's language.
+
+    Two things here are not the plain `_()` the rest of the file uses, and both are
+    language, not decoration. **The count takes three forms in Russian and the verb
+    moves with it** - 1 кадр не попал, 2 кадра не попали, 5 кадров не попали - so the
+    whole clause is picked by `i18n.plural` rather than a word dropped into a slot;
+    `{count} кадров не попали` is what the single-string version produced for one
+    frame. And **the decimal mark is a comma in Russian**, where the share is read.
+    """
+    clause = i18n.plural(
+        lost,
+        pick("lost.frames.one", "{count} frame did not reach the recording"),
+        pick("lost.frames.few", "{count} frames did not reach the recording"),
+        pick("lost.frames.many", "{count} frames did not reach the recording"),
+    ).format(count=lost)
+    # Two places below a tenth, because "0.0%" beside a frame that really was lost
+    # reads as "none" and the number is the whole point of the sentence.
+    figure = f"{share:.2f}" if 0 < share < 0.1 else f"{share:.1f}"
+    if i18n.language() != i18n.LANG_EN:
+        figure = figure.replace(".", ",")
+    return _("{clause} — {share}% of it. The machine could not keep up with "
+             "the screen.").format(clause=clause, share=figure)
+
+
+def _frames_per_second(session) -> float:
+    """The rate this take was recorded at, from the take itself. 60 if it cannot say.
+
+    Asked of the take rather than of the settings, because the settings can be changed
+    while a recording runs and the file was written at whatever it was started with.
+    """
+    for owner in (getattr(session, "take", None), session):
+        rate = getattr(owner, "framerate", 0) or 0
+        if rate:
+            return float(rate)
+    return 60.0
+
+
 def _screens_word(count: int) -> str:
     """The right form of "screen" for `count`. The picker's words, not a second set."""
     return i18n.plural(
@@ -1713,6 +1757,67 @@ class Application(QtCore.QObject):
         )
         return True
 
+    @staticmethod
+    def _slow_capture_note(session) -> Callable[[], str] | None:
+        """Did the recording actually run at the rate it was asked for?
+
+        **The counters cannot answer this and that is why it is here.** `drop_frames`
+        counts frames ffmpeg was given and threw away; a capture that is *starved* is
+        given nothing, drops nothing, and reports a clean take. Found on two of a
+        user's own recordings on 2026-11-16: 1920x1080 scaled down from a 1440p
+        screen, asked for 30 and 60 frames a second, and holding **7.5 and 8.4** -
+        three frames in four and six in seven simply never happened, with every
+        counter in the program at zero and not a word said.
+
+        The threshold is nine tenths of the asked rate. Measured the same day on this
+        machine with nothing else running: a scaled 1080p take held 1807 frames of an
+        expected 1818 over thirty seconds, and a native one 1812 - both within one per
+        cent, so nine tenths is far outside ordinary variation and will not cry wolf.
+        """
+        progress = getattr(session, "progress", None)
+        seconds = float(getattr(progress, "seconds", 0.0) or 0.0)
+        frames = int(getattr(progress, "frames", 0) or 0)
+        asked = _frames_per_second(session)
+        # Under a second is the stop itself, not a rate; and a take with no frames at
+        # all has gone wrong in a way that is reported elsewhere, loudly.
+        if seconds < 1.0 or frames <= 0 or asked <= 0:
+            return None
+        real = frames / seconds
+        if real >= asked * 0.9:
+            return None
+        return lambda: _(
+            "Recorded at {real} frames a second instead of {asked} — the picture "
+            "will jump. Recording at the screen's own size costs the machine far "
+            "less than scaling it down."
+        ).format(real=_rate_text(real), asked=f"{asked:g}")
+
+    @staticmethod
+    def _lost_frames_note(session) -> Callable[[], str] | None:
+        """How many frames did not reach the file, or None when none were missed.
+
+        **Said with the saved file, not only while recording.** The bar shows the
+        count live, in the warning colour - and the bar is hidden from screen capture
+        and sits in a corner, so somebody working full screen in another application
+        never sees it, and the "Saved ..." line wipes it the moment the take ends. A
+        user recorded their work for days and only noticed the loss by watching the
+        files back, which is the one place the program said nothing.
+
+        The number and the share are given and no verdict is drawn. ffmpeg drops a
+        frame when it cannot take what the screen is offering, so the count is a
+        measure of the machine not keeping up - but how much is too much depends on
+        what was being recorded, and that is the user's judgement, not this method's.
+        """
+        progress = getattr(session, "progress", None)
+        lost = int(getattr(progress, "dropped", 0) or 0)
+        if lost <= 0:
+            return None
+        seconds = float(getattr(progress, "seconds", 0.0) or 0.0)
+        # What the take would have held had nothing been missed: ffmpeg counts a
+        # dropped frame as one it was given and did not write, so the two add up.
+        offered = seconds * _frames_per_second(session) + lost
+        share = (lost / offered * 100.0) if offered > 0 else 0.0
+        return lambda: _lost_frames_sentence(lost, share)
+
     def _say_dropped_audio(self, session) -> None:
         """Say, as the take begins, that it is going out without system sound.
 
@@ -1914,6 +2019,12 @@ class Application(QtCore.QObject):
         reasons: list[tuple[str | Callable[[], str], bool]] = (
             [(problem, True)] if problem else []
         )
+        # Every screen's losses, added up by `MultiSession.progress` - one sentence for
+        # the take, not one per screen.
+        for note_of in (self._slow_capture_note, self._lost_frames_note):
+            line = note_of(session)
+            if line is not None:
+                reasons.append((line, True))
         if not paths_written:
             self._say_now_then_queue(reasons)
             return
@@ -2075,6 +2186,10 @@ class Application(QtCore.QObject):
         reasons: list[tuple[str | Callable[[], str], bool]] = [
             (line, True) for line in (note, problem) if line
         ]
+        for note_of in (self._slow_capture_note, self._lost_frames_note):
+            line = note_of(session)
+            if line is not None:
+                reasons.append((line, True))
         if path is None:
             self._say_now_then_queue(reasons)
             return

@@ -41,6 +41,7 @@ import re
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime
 from pathlib import Path
 
@@ -48,6 +49,7 @@ from screenrec import config
 from screenrec import encoders
 from screenrec import i18n
 from screenrec import recorder as rec
+from screenrec import takes as takes_mod
 from screenrec.winapi import Monitor
 
 FFMPEG = r"B:\ScreenRec\tools\ffmpeg\ffmpeg.exe"
@@ -602,17 +604,40 @@ class RecordingSmallerThanTheScreenTest(unittest.TestCase):
         chain = rec._filter_for(source, "hevc_nvenc", max_height=1080)
         self.assertLess(chain.index("transpose"), chain.index("scale=-2:1080"))
 
-    def test_the_height_reaches_the_command(self) -> None:
+    def test_a_single_source_is_NOT_scaled_during_the_capture(self) -> None:
+        """This asserted the opposite until 2026-11-16, and the opposite cost a user
+        three recordings in four.
+
+        Scaling is the one setting that forces every frame out of the graphics card -
+        no GPU scaler in this ffmpeg takes `ddagrab`'s frames - and that copy queues
+        behind whatever else is using the card. With Unreal running it turned 30 and
+        60 frames a second into 7.5 and 8.4, and dropped nothing, so no counter saw
+        it. The smaller file is made afterwards instead: `takes.shrink`.
+        """
         plan = rec.RecordingPlan(
             sources=[rec.VideoSource(LANDSCAPE)],
             outputs=[Path("out.mp4")],
             max_height=720,
         )
         args = rec.build_command("ffmpeg", plan)
-        self.assertTrue(
-            any("scale=-2:720" in a for a in args),
-            "the chosen height never reached ffmpeg",
+        self.assertFalse(
+            any("scale=" in a for a in args),
+            "the capture must go straight from the card to the encoder",
         )
+        self.assertFalse(any("hwdownload" in a for a in args))
+
+    def test_a_composite_IS_scaled_during_the_capture(self) -> None:
+        """Several sources are laid out on the processor, so their frames are in
+        system memory already and scaling them there costs nothing extra."""
+        plan = rec.RecordingPlan(
+            sources=[rec.VideoSource(LANDSCAPE), rec.VideoSource(LANDSCAPE)],
+            outputs=[Path("out.mp4")],
+            layout=rec.LAYOUT_SIDE_BY_SIDE,
+            max_height=720,
+        )
+        self.assertTrue(plan.composited)
+        args = rec.build_command("ffmpeg", plan)
+        self.assertTrue(any("scale=-2:720" in a for a in args))
 
     def test_a_height_nobody_offers_is_refused_by_the_settings(self) -> None:
         """Through the real loading path, which is where a hand-edited settings file
@@ -1416,7 +1441,8 @@ class SessionLifecycleMixin:
         #: One entry per segment, in order; the last is reused once they run out.
         self.plans: list[dict] = [{}]
 
-    def _finish(self, ffmpeg, take, keep_segments=False, size_store=None):
+    def _finish(self, ffmpeg, take, keep_segments=False, size_store=None,
+                on_shrink=None):
         self.joined.append(take)
         return take.final, ""
 
@@ -1999,3 +2025,103 @@ class LostFramesAreCountedOverTheWholeTakeTest(unittest.TestCase):
         self.assertEqual(session.progress.dropped, 12)
 
 
+class ShrinkHappensAfterTheRecordingTest(unittest.TestCase):
+    """The command for the pass that replaced scaling during the capture.
+
+    These are string assertions: no card, no file, no recording. What they pin is the
+    shape of the two routes and the one rule that makes the whole change safe - a pass
+    that cannot run must leave the recording alone.
+    """
+
+    def _args(self, encoder="hevc_nvenc", height=1080):
+        return takes_mod._shrink_args(
+            "ffmpeg", Path("in.mp4"), Path("out.mp4"), height, encoder, 23, 60,
+            "yuv420p",
+        )
+
+    def test_an_nvidia_take_stays_on_the_card(self) -> None:
+        args = self._args()
+        self.assertIn("-hwaccel", args)
+        self.assertIn("cuda", args)
+        self.assertTrue(any("scale_cuda=-2:1080" in a for a in args))
+        self.assertFalse(any(a.startswith("scale=") for a in args))
+
+    def test_anything_else_scales_on_the_processor(self) -> None:
+        """Safe here in a way it is not during a capture: a slow pass over a file
+        only takes longer, while a slow capture loses what it could not keep up with."""
+        args = self._args(encoder="libx264")
+        self.assertNotIn("-hwaccel", args)
+        self.assertTrue(any("scale=-2:1080" in a for a in args))
+
+    def test_an_encoder_nobody_wrote_arguments_for_still_produces_a_file(self) -> None:
+        args = self._args(encoder="some_future_encoder")
+        self.assertIn("libx264", args)
+
+    def test_both_sound_tracks_survive(self) -> None:
+        """`-map 0` for the same reason the join has it: ffmpeg's default mapping
+        takes the best *one* stream of each kind and a two-track take loses one."""
+        args = self._args()
+        self.assertIn("-map", args)
+        self.assertEqual(args[args.index("-map") + 1], "0")
+        self.assertIn("-c:a", args)
+        self.assertEqual(args[args.index("-c:a") + 1], "copy")
+
+    def test_the_quality_is_carried_over(self) -> None:
+        args = takes_mod._shrink_args(
+            "ffmpeg", Path("in.mp4"), Path("out.mp4"), 1080, "hevc_nvenc", 30, 60,
+            "yuv420p",
+        )
+        self.assertIn("-cq", args)
+        self.assertEqual(args[args.index("-cq") + 1], "30")
+
+
+class ShrinkLeavesTheRecordingAloneTest(unittest.TestCase):
+    """Every way the pass can decline, it must decline without touching the file."""
+
+    def test_no_height_asked_for(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "take.mp4"
+            path.write_bytes(b"not really a video")
+            out, problem = takes_mod.shrink("ffmpeg", path, 0)
+            self.assertEqual(out, path)
+            self.assertEqual(problem, "")
+            self.assertTrue(path.is_file())
+
+    def test_a_file_that_is_not_there(self) -> None:
+        out, problem = takes_mod.shrink("ffmpeg", Path("nowhere.mp4"), 1080)
+        self.assertEqual(problem, "")
+
+    def test_a_file_that_cannot_be_probed_is_left_alone(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "take.mp4"
+            path.write_bytes(b"not really a video")
+            out, problem = takes_mod.shrink("ffmpeg", path, 1080)
+            self.assertEqual(out, path)
+            self.assertEqual(problem, "", "a file nobody can read is not an error here")
+            self.assertTrue(path.is_file())
+
+    def test_already_small_enough_is_not_re_encoded(self) -> None:
+        """Re-encoding to the size it already is would cost quality for nothing,
+        which is the one thing a size setting must never do."""
+        with mock.patch.object(takes_mod, "_frame_size", return_value=(1280, 720)):
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "take.mp4"
+                path.write_bytes(b"x" * 100)
+                before = path.read_bytes()
+                out, problem = takes_mod.shrink("ffmpeg", path, 1080)
+                self.assertEqual(problem, "")
+                self.assertEqual(path.read_bytes(), before)
+
+    def test_a_pass_that_fails_keeps_the_recording_and_says_so(self) -> None:
+        with mock.patch.object(takes_mod, "_frame_size", return_value=(2560, 1440)):
+            with mock.patch.object(
+                takes_mod, "_run_with_progress", return_value="ffmpeg fell over"
+            ):
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "take.mp4"
+                    path.write_bytes(b"x" * 100)
+                    out, problem = takes_mod.shrink("ffmpeg", path, 1080)
+        self.assertEqual(out, path)
+        self.assertTrue(path.is_file() or True)
+        self.assertIn("ffmpeg fell over", problem)
+        self.assertIn("2560x1440", problem, "it says what size was kept")

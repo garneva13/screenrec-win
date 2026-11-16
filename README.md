@@ -51,7 +51,7 @@ is bundled under `tools\ffmpeg`.
 | Cursor | drawn or not; clicks optionally get a fading ring |
 | Camera | optional, in a corner of the recording: four corners, four sizes, rounded rectangle / circle / rectangle, and the camera's own capture resolution chosen for the window or picked by hand - drawn on the desktop, so it costs the capture pipeline nothing, and it can be switched off **in the middle of a take** when it covers something |
 | Settings | behind the gear: five pages, a diagram of where the camera sits, and shortcut boxes that read the keys you press |
-| Size | the screen's own, or scaled down to 1440p, 1080p or 720p; never scaled up |
+| Size | the screen's own, or scaled down to 1440p, 1080p or 720p; never scaled up. **Made smaller after the recording, not during it** - scaling a capture is the one setting that forces every frame off the graphics card, and on a card busy with a 3D application that copy queues behind it: measured on a user's own files, 30 and 60 frames a second became 7.5 and 8.4. The pass afterwards keeps every frame and runs at six times real time |
 | Encoder | four measured profiles: H.265, H.265 4:4:4 for sharp text, H.264, x264 |
 | Output | MP4 in `%USERPROFILE%\Videos\ScreenRec`, named by a strftime pattern |
 | Source | …or **every screen at once**: one file per monitor, 0 ms apart |

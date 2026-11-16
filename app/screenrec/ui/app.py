@@ -38,7 +38,7 @@ from .. import winapi
 from .. import i18n
 from ..i18n import _, pick
 from . import surfaces, theme
-from .bar import Bar
+from .bar import Bar, format_elapsed
 from .captureframe import CaptureFrame
 from .countdown import Countdown
 from .tray import SingleInstance, Tray
@@ -185,6 +185,10 @@ class Application(QtCore.QObject):
 
         self.session: recorder.RecordingSession | None = None
         self.multi: multi_mod.MultiSession | None = None
+        #: True while a finished recording is being made smaller. The pass runs on
+        #: this thread and pumps the event loop so the window stays alive, which means
+        #: a second recording could be started from inside it - so it is refused.
+        self._shrinking = False
         self.last_set: Path | None = None
         self._player = None
         self.last_file: Path | None = None
@@ -1655,6 +1659,15 @@ class Application(QtCore.QObject):
             self._check_ffmpeg()
             if not self._ffmpeg:
                 return
+        if self._shrinking:
+            # `_on_shrink` pumps the event queue so the window stays alive while the
+            # last recording is made smaller, which leaves this button live. Starting
+            # now would record over the file that pass is still writing.
+            self._say(
+                lambda: _("Still finishing the last recording - one moment."),
+                warn=True,
+            )
+            return
         if self._probing:
             # `_probe_step` pumps the event queue, so this button is live while the
             # probe runs. Planning a recording now would plan it from half an answer.
@@ -1756,6 +1769,23 @@ class Application(QtCore.QObject):
             warn=True,
         )
         return True
+
+    def _on_shrink(self, seconds: float) -> None:
+        """Say how far the shrink pass has got, and keep the window breathing.
+
+        The pass runs where `stop_recording` stands, so without pumping the event loop
+        the program would freeze for its whole length - six seconds for a minute of
+        recording, measured, and a long take is longer than anyone will wait at a dead
+        window. `_shrinking` guards what that pumping lets in.
+        """
+        self.bar.set_status(
+            _("Making the recording smaller… {seconds}").format(
+                seconds=format_elapsed(seconds)
+            )
+        )
+        QtWidgets.QApplication.processEvents(
+            QtCore.QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents
+        )
 
     @staticmethod
     def _slow_capture_note(session) -> Callable[[], str] | None:
@@ -2168,7 +2198,11 @@ class Application(QtCore.QObject):
             self.bar.set_recording(False)
             return
 
-        path, problem = session.stop()
+        self._shrinking = True
+        try:
+            path, problem = session.stop(on_shrink=self._on_shrink)
+        finally:
+            self._shrinking = False
         self.bar.set_recording(False)
         self.tray.set_recording(False)
         # The diagnosis of a take that went wrong, and both lines were said straight
@@ -2190,6 +2224,11 @@ class Application(QtCore.QObject):
             line = note_of(session)
             if line is not None:
                 reasons.append((line, True))
+        # The recording is whole whether or not it could be made smaller, so this is
+        # a line to read rather than a failure - see `takes.shrink`.
+        shrink_problem = getattr(getattr(session, "take", None), "shrink_problem", "")
+        if shrink_problem:
+            reasons.append((shrink_problem, True))
         if path is None:
             self._say_now_then_queue(reasons)
             return

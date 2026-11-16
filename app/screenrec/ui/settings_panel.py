@@ -1701,9 +1701,12 @@ class SettingsPanel(surfaces.FloatingSurface):
                 .format(screen=screen)
             )
             return
+        # This said "scaled down while recording" and that is exactly what it no
+        # longer does. See `takes.shrink` for what scaling during a capture cost.
         self.size_note.setText(
-            _("Scaled down while recording. That costs a copy through system memory, "
-              "and the frame rate held when it was measured.")
+            _("Made smaller after the recording, not during it — the recording "
+              "itself keeps the whole frame rate, and the smaller file takes a "
+              "short pass at the end.")
         )
 
     def _on_framerate(self, _index: int) -> None:

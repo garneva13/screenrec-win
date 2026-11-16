@@ -63,10 +63,12 @@ RUSSIAN: dict[str, str] = {
     "{height}p": "{height}p",
     "This screen is {screen}p, so nothing is scaled and nothing is saved.":
         "Этот экран — {screen}p, поэтому ничего не уменьшается и ничего не экономится.",
-    "Scaled down while recording. That costs a copy through system memory, "
-    "and the frame rate held when it was measured.":
-        "Уменьшается прямо при записи. Это стоит одной копии через оперативную память, "
-        "и частота кадров при замере не просела.",
+    # It did scale during the capture until 2026-11-16, and on a busy graphics card
+    # that cost three frames in four. See `takes.shrink`.
+    "Made smaller after the recording, not during it — the recording itself keeps "
+    "the whole frame rate, and the smaller file takes a short pass at the end.":
+        "Уменьшается после записи, а не во время неё — сама запись сохраняет всю "
+        "частоту кадров, а на уменьшенный файл уходит короткий проход в конце.",
     "Format": "Формат",
     "Quality": "Качество",
     "Microphone": "Микрофон",

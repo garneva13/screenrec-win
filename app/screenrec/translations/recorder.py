@@ -129,6 +129,15 @@ RUSSIAN: dict[str, str] = {
         "Записано {real} кадра в секунду вместо {asked} — картинка будет рваной. "
         "Запись в собственном размере экрана обходится машине гораздо дешевле, чем "
         "с уменьшением.",
+    # The shrink pass, which runs after the recording rather than during it.
+    "Making the recording smaller… {seconds}":
+        "Уменьшаю запись… {seconds}",
+    "Still finishing the last recording - one moment.":
+        "Ещё доделываю прошлую запись — одну минуту.",
+    "The recording could not be made smaller: {reason}. It has been kept at its own "
+    "size, {width}x{height}, and is otherwise whole.":
+        "Уменьшить запись не удалось: {reason}. Она сохранена в своём размере, "
+        "{width}×{height}, и в остальном цела.",
     "lost.frames.one": "{count} кадр не попал в запись",
     "lost.frames.few": "{count} кадра не попали в запись",
     "lost.frames.many": "{count} кадров не попали в запись",

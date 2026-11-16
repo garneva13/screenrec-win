@@ -101,6 +101,12 @@ class Take:
     width: int = 0
     height: int = 0
     framerate: int = 0
+    #: The height the finished file should come down to, or 0 to leave it alone.
+    #: **Applied after the recording, never during it** - see `shrink`.
+    max_height: int = 0
+    #: The `cq` ladder number the take was encoded at, so that scaling it afterwards
+    #: does not quietly change its quality as well as its size.
+    quality_number: int = 23
     #: What the recorder's own clock made the take, if it has one
     #: (`recorder.Progress.seconds`). Cross-checked against the finished file rather
     #: than believed: a clock that counted a pause describes a different recording.
@@ -109,6 +115,9 @@ class Take:
     #: reason to fail the join, and never shown to a user as it stands - it is English
     #: diagnostic text, like `capabilities.choose`'s reason.
     measurement_problem: str = ""
+    #: Set by `finish`: '' when the file was made smaller as asked, or was already
+    #: small enough; otherwise why it was not. The recording is whole either way.
+    shrink_problem: str = ""
 
     def next_segment(self) -> Path:
         """The path the next segment writes to. Never collides with an existing one."""
@@ -418,7 +427,7 @@ def measure(
 
 def finish(
     ffmpeg: str, take: Take, keep_segments: bool = False,
-    size_store: Path | None = None,
+    size_store: Path | None = None, on_shrink=None,
 ) -> tuple[Path | None, str]:
     """Turn a take's segments into the single file the user asked for.
 
@@ -506,12 +515,171 @@ def finish(
             "in {folder} and can be joined by hand."
         ).format(reason=reason, folder=written[0].parent)
 
+    # **After the join, never during the capture.** `take.max_height` is 0 unless the
+    # user asked for a smaller file *and* the capture did not already make one; see
+    # `shrink` for what scaling during a capture cost a user. A pass that fails leaves
+    # the recording whole at its own size and says so, which is why its problem is
+    # carried rather than returned: the take is saved either way.
+    take.shrink_problem = ""
+    if take.max_height:
+        _path, take.shrink_problem = shrink(
+            ffmpeg, take.final, take.max_height,
+            encoder=take.encoder, quality=take.quality_number,
+            framerate=take.framerate or 60, pix_fmt=take.pix_fmt or "yuv420p",
+            on_progress=on_shrink,
+        )
+
+    # Measured after the shrink, so the cost stored is the cost of the file that was
+    # actually kept.
     take.measurement_problem = measure(ffmpeg, take, take.final, size_store)
 
     if not keep_segments:
         for segment in written:
             segment.unlink(missing_ok=True)
     return take.final, ""
+
+
+def shrink(
+    ffmpeg: str, path: Path, max_height: int, *, encoder: str = "",
+    quality: int = 23, framerate: int = 60, pix_fmt: str = "yuv420p",
+    on_progress=None,
+) -> tuple[Path, str]:
+    """Make a finished recording smaller, **after** it was captured, not during.
+
+    Returns (path, problem). The path is the finished file either way: a pass that
+    fails leaves the recording exactly as it was and reports why, because a smaller
+    file nobody asked for is worth less than the recording.
+
+    **Why this is not a filter on the capture.** Scaling during the capture is the one
+    setting that forces every frame out of the graphics card - no GPU scaler in this
+    ffmpeg will take `ddagrab`'s frames, and fifteen spellings were tried on
+    2026-11-16 - and that copy has to queue behind whatever else is using the card. On
+    a user's own machine with Unreal running it turned 30 and 60 frames a second into
+    **7.5 and 8.4**: three frames in four, and six in seven, were never captured at
+    all. Nothing was dropped, so no counter in the program noticed.
+
+    From a *file* the decoder hands out frames the card can already scale, so the whole
+    pass stays on it. Measured the same day: 1794 frames in, **1794 out**,
+    2560x1440 to 1920x1080, 4.7 s for 30 s of recording - six times real time. And the
+    asymmetry that makes this the right place for it: a pass that is too slow only
+    takes longer, while a capture that is too slow loses what it could not keep up with.
+
+    `on_progress(seconds)` is called as ffmpeg reports its position, so a window can
+    say what is happening rather than freezing.
+    """
+    from .i18n import _
+
+    if max_height <= 0 or not path.is_file():
+        return path, ""
+    size = _frame_size(ffmpeg, path)
+    if size is None:
+        return path, ""
+    width, height = size
+    if height <= max_height:
+        # Already at or below what was asked for. Re-encoding it would cost quality
+        # for nothing, which is the one thing a size setting must never do.
+        return path, ""
+
+    out = path.with_name(f"{path.stem}.small{path.suffix}")
+    out.unlink(missing_ok=True)
+    args = _shrink_args(ffmpeg, path, out, max_height, encoder, quality, framerate,
+                        pix_fmt)
+    problem = _run_with_progress(args, on_progress)
+    if problem or not out.is_file() or out.stat().st_size == 0:
+        out.unlink(missing_ok=True)
+        return path, _(
+            "The recording could not be made smaller: {reason}. It has been kept at "
+            "its own size, {width}x{height}, and is otherwise whole."
+        ).format(reason=problem or "no file was written", width=width, height=height)
+
+    try:
+        path.unlink()
+        out.rename(path)
+    except OSError as exc:
+        out.unlink(missing_ok=True)
+        return path, _(
+            "The recording could not be made smaller: {reason}. It has been kept at "
+            "its own size, {width}x{height}, and is otherwise whole."
+        ).format(reason=exc, width=width, height=height)
+    return path, ""
+
+
+def _shrink_args(
+    ffmpeg: str, source: Path, out: Path, max_height: int, encoder: str,
+    quality: int, framerate: int, pix_fmt: str,
+) -> list[str]:
+    """The command for one shrink pass: on the card where it can be, else on the CPU.
+
+    `scale_cuda` needs CUDA frames, which only an NVIDIA decode produces, so the GPU
+    route is for NVENC takes alone. Everywhere else the frames come through system
+    memory and `scale` does the work - still safe, because this is a file and a slow
+    pass only takes longer.
+    """
+    from . import encoders as encoders_mod
+
+    head = [ffmpeg, "-hide_banner", "-loglevel", "error", "-progress", "pipe:1",
+            "-nostats"]
+    nvidia = encoders_mod.family_of(encoder) == "nvenc"
+    if nvidia:
+        head += ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+    head += ["-i", str(source)]
+    chain = (f"scale_cuda=-2:{int(max_height)}" if nvidia
+             else f"scale=-2:{int(max_height)}:flags=bicubic")
+    try:
+        codec = encoders_mod.codec_args(
+            encoder, quality=quality, framerate=framerate, pix_fmt=pix_fmt
+        )
+    except Exception:  # noqa: BLE001 - an encoder nobody wrote arguments for
+        codec = ["-c:v", "libx264", "-crf", str(quality), "-preset", "veryfast"]
+    # `-map 0` for the same reason the join has it: a take with two sound tracks loses
+    # one to ffmpeg's default mapping, silently and with exit 0.
+    return head + ["-vf", chain] + codec + [
+        "-map", "0", "-c:a", "copy", "-movflags", "+faststart", "-y", str(out)
+    ]
+
+
+def _frame_size(ffmpeg: str, path: Path) -> tuple[int, int] | None:
+    """(width, height) of a file's first video stream, or None if it cannot be read."""
+    try:
+        result = subprocess.run(
+            [str(paths.ffprobe_exe()), "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "json", str(path)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=60, creationflags=CREATE_NO_WINDOW,
+        )
+        stream = json.loads(result.stdout)["streams"][0]
+        return int(stream["width"]), int(stream["height"])
+    except Exception:  # noqa: BLE001 - a file that cannot be probed is left alone
+        return None
+
+
+def _run_with_progress(args: list[str], on_progress) -> str:
+    """Run ffmpeg, feeding `on_progress` its position. '' or why it failed.
+
+    No timeout: the pass is as long as the recording is, and killing it part way would
+    leave the user with neither file. It is watched instead - the caller sees it move.
+    """
+    try:
+        process = subprocess.Popen(
+            args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=CREATE_NO_WINDOW,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    assert process.stdout is not None
+    for raw in process.stdout:
+        line = raw.decode("utf-8", "replace").strip()
+        if line.startswith("out_time_ms=") and on_progress is not None:
+            try:
+                on_progress(int(line.split("=", 1)[1]) / 1_000_000.0)
+            except Exception:  # noqa: BLE001 - somebody else's callback
+                pass
+    errors = process.stderr.read().decode("utf-8", "replace") if process.stderr else ""
+    process.wait()
+    if process.returncode != 0:
+        tail = [line for line in errors.strip().splitlines() if line.strip()]
+        return tail[-1] if tail else f"ffmpeg exited {process.returncode}"
+    return ""
 
 
 def orphans(folder: Path) -> list[Path]:

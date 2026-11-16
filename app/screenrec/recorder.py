@@ -248,6 +248,21 @@ class RecordingPlan:
         return bool(self.loopback_pipe)
 
     @property
+    def composited(self) -> bool:
+        """Whether several sources are laid out into one picture.
+
+        It decides where a smaller output is made. A composite is built on the
+        processor, so its frames are in system memory already and scaling them there
+        costs nothing extra; a single source goes from the card straight into the
+        encoder and must **not** be scaled during the capture - see `takes.shrink` for
+        what that cost a user.
+        """
+        return (
+            self.layout in (LAYOUT_SIDE_BY_SIDE, LAYOUT_STACKED, LAYOUT_PIP)
+            and len(self.sources) > 1
+        )
+
+    @property
     def has_audio(self) -> bool:
         return self.has_mic or self.has_system_audio
 
@@ -386,9 +401,7 @@ def build_command(
     video_maps: list[str] = []
 
     for i, source in enumerate(plan.sources):
-        chain = _filter_for(
-            source, plan.encoder, plan.pix_fmt, max_height=plan.max_height
-        )
+        chain = _filter_for(source, plan.encoder, plan.pix_fmt)
         if chain:
             filter_parts.append(f"[{i}:v]{chain}[v{i}]")
             video_maps.append(f"[v{i}]")
@@ -1050,7 +1063,7 @@ class RecordingSession:
         self._paused = False
         return ""  # a `wait=False` resume is only provisional until `settle`
 
-    def stop(self) -> tuple[Path | None, str]:
+    def stop(self, on_shrink=None) -> tuple[Path | None, str]:
         """End the take and assemble the file. Returns (path, problem)."""
         problem = ""
         self._settling = None
@@ -1071,7 +1084,9 @@ class RecordingSession:
         # 5.017 s here against 5.084 s and 5.117 s in the finished file - 0.10 s out,
         # and the cost was filed both times.
         self.take.seconds = self._banked_seconds
-        path, join_problem = takes_mod.finish(self.ffmpeg, self.take)
+        path, join_problem = takes_mod.finish(
+            self.ffmpeg, self.take, on_shrink=on_shrink
+        )
         if join_problem:
             problem = f"{problem}  {join_problem}".strip()
         return path, problem
@@ -1201,6 +1216,11 @@ class RecordingSession:
         self.take.width = width
         self.take.height = height
         self.take.framerate = plan.framerate
+        # 0 when the capture already made the picture smaller: a composite is built in
+        # system memory, so scaling it there is free and a second pass would shrink an
+        # already-shrunk file. See `RecordingPlan.composited`.
+        self.take.max_height = 0 if plan.composited else plan.max_height
+        self.take.quality_number = plan.quality
 
     def _end_segment(self) -> str:
         recorder = self.recorder

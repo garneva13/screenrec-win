@@ -159,6 +159,7 @@ class _Controller:
     # function, and a plain function in a class body is an instance method.
     _lost_frames_note = staticmethod(app_module.Application._lost_frames_note)
     _slow_capture_note = staticmethod(app_module.Application._slow_capture_note)
+    _on_shrink = app_module.Application._on_shrink
     _start_all_screens = app_module.Application._start_all_screens
     open_settings = app_module.Application.open_settings
     # The settings window asks for the global hotkeys to be stood down while a
@@ -197,6 +198,9 @@ class _Controller:
         self._status = None
         self._ffmpeg = "ffmpeg.exe"
         self._probing = False
+        # True while a finished take is being made smaller; `start_recording`
+        # refuses then, because that pass pumps the event loop.
+        self._shrinking = False
         self._probed = found is not None
         self._encoder_note = ""
         self._frame_note = ""
@@ -1640,7 +1644,7 @@ class StatusQueueTest(ControllerTestCase):
         def log_text(self) -> str:
             return self._log
 
-        def stop(self, timeout: float = 12.0):
+        def stop(self, timeout: float = 12.0, on_shrink=None):
             return self._path, ""
 
     def _dead(self, controller):
@@ -1762,7 +1766,7 @@ class StopLinesTest(ControllerTestCase):
             self._problem = problem
             self.feeder_note = note
 
-        def stop(self, timeout: float = 12.0):
+        def stop(self, timeout: float = 12.0, on_shrink=None):
             return self._path, self._problem
 
     class _Multi:
@@ -1774,7 +1778,7 @@ class StopLinesTest(ControllerTestCase):
             self._written = written
             self._problem = problem
 
-        def stop(self):
+        def stop(self, on_shrink=None):
             return self._written, self._problem
 
         def sidecar_path(self):
